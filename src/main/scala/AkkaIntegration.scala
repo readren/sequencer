@@ -13,38 +13,12 @@ object AkkaIntegration {
 		def scheduler: Scheduler
 	}
 	
-	class TaskDomainExtension(assistant: ExtendedAssistant) extends TaskDomain(assistant) {
-
-		extension [A](target: ActorRef[A]) {
-			def say(message: A): Task[Unit] = Task.mine(() => target ! message)
-			
-			/** Note: The type parameter is required for the compiler to know the type parameter of the resulting [[Task]]. */
-			def query[B](messageBuilder: ActorRef[B] => A)(using timeout: Timeout): Task[B] = {
-				import akka.actor.typed.scaladsl.AskPattern.*
-				Task.alien(target.ask[B](messageBuilder)(using timeout, assistant.scheduler))
-			}
-		}
-
-		extension [A](task: Task[A]) {
-			/** $cuandoCompletaEjecutadaPorEsteActor
-			 * $desdeCualquierHilo
-			 */
-			def attemptAndSend(isRunningInDoSiThEx: Boolean, destination: ActorRef[A])(errorHandler: Throwable => Unit): Unit = {
-				task.attempt(isRunningInDoSiThEx) {
-					case Success(r) => destination ! r;
-					case Failure(e) => errorHandler(e)
-				}
-			}
-		}
-	}
-
-
 	private[AkkaIntegration] case class Procedure(runnable: Runnable)
 
-	def setup[A: Typeable](frontier: (ActorContext[A], TaskDomainExtension) => Behavior[A]): Behavior[A] = {
+	def setup[A: Typeable](frontier: (ActorContext[A], AkkaIntegration) => Behavior[A]): Behavior[A] = {
 		val behaviorA = Behaviors.setup[A] { ctx =>
 			// TODO analyze if is it OK to upcast the ActorContext in this situation?
-			val domain: TaskDomainExtension = new TaskDomainExtension(buildAssistant(ctx.asInstanceOf[ActorContext[Procedure]]));
+			val domain: AkkaIntegration = new AkkaIntegration(buildAssistant(ctx.asInstanceOf[ActorContext[Procedure]]));
 			frontier(ctx, domain)
 		}
 
@@ -52,8 +26,8 @@ object AkkaIntegration {
 		behaviorU.narrow[A]
 	}
 
-	def setup[A: Typeable](ctxA: ActorContext[A])(frontier: TaskDomainExtension => Behavior[A]): Behavior[A] = {
-		val domain: TaskDomainExtension = new TaskDomainExtension(buildAssistant(ctxA.asInstanceOf[ActorContext[Procedure]]));
+	def setup[A: Typeable](ctxA: ActorContext[A])(frontier: AkkaIntegration => Behavior[A]): Behavior[A] = {
+		val domain: AkkaIntegration = new AkkaIntegration(buildAssistant(ctxA.asInstanceOf[ActorContext[Procedure]]));
 		val behaviorA = frontier(domain)
 		Behaviors.intercept(procedureInterceptor)(behaviorA).narrow
 	}
@@ -74,4 +48,33 @@ object AkkaIntegration {
 				Behaviors.same // TODO: analyze if returning `same` may cause problems in edge cases
 			}
 		}.asInstanceOf[BehaviorInterceptor[A | Procedure, A]]
+}
+
+class AkkaIntegration(assistant: AkkaIntegration.ExtendedAssistant) extends TaskDomain(assistant) {
+
+	extension [A](target: ActorRef[A]) {
+		def say(message: A): Task[Unit] = Task.mine(() => target ! message)
+
+		/** Note: The type parameter is required for the compiler to know the type parameter of the resulting [[Task]]. */
+		def query[B](messageBuilder: ActorRef[B] => A)(using timeout: Timeout): Task[B] = {
+			import akka.actor.typed.scaladsl.AskPattern.*
+			Task.wait(target.ask[B](messageBuilder)(using timeout, assistant.scheduler))
+		}
+	}
+
+	extension [A](task: Task[A]) {
+
+		/**
+		 * 
+		 * @param isRunningInDoSiThEx
+		 * @param destination
+		 * @param errorHandler
+		 */
+		def attemptAndSend(isRunningInDoSiThEx: Boolean, destination: ActorRef[A])(errorHandler: Throwable => Unit): Unit = {
+			task.attempt(isRunningInDoSiThEx) {
+				case Success(r) => destination ! r;
+				case Failure(e) => errorHandler(e)
+			}
+		}
+	}
 }
