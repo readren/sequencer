@@ -12,7 +12,7 @@ import scala.io.StdIn
 import scala.reflect.ClassTag
 
 object Prueba {
-	case class RunProcedure(val procedure: () => Unit) extends AnyVal
+	case class RunProcedure(procedure: () => Unit) extends AnyVal
 
 	given Timeout = Timeout(3, TimeUnit.SECONDS)
 
@@ -108,15 +108,15 @@ object Prueba {
 
 	def apply3(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			AkkaIntegration.setup[Pregunta](ctx) { taskContext =>
+			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
 				import taskContext.*
 
 				Behaviors.receiveMessage {
 					case Pregunta(replyTo1, "Hola") =>
 						val task = for {
 							case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.query[Pregunta](ref => Respuesta(ref, "Hola también"))
-							x <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
-						} yield x
+							_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
+						} yield ()
 						task.attempt(true) { x => ctx.log.info(s"resultado final: $x") }
 						Behaviors.same
 				}
@@ -126,16 +126,16 @@ object Prueba {
 
 	def apply4(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			AkkaIntegration.setup[Pregunta](ctx) { taskContext =>
+			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
 				import taskContext.*
 
 				val paso2 = Behaviors.receiveMessage[Pregunta] {
 					case Pregunta(replyTo2, "¿Qué tal?") =>
 						val task = for {
 							_ <- Task.mine(() => ctx.log.info("sigue funcionando"))
-							x <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
-						} yield x
-						task.attempt(false)(rf => ctx.log.info(s"resultado final: $rf"))
+							_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
+						} yield ()
+						task.attempt()(rf => ctx.log.info(s"resultado final: $rf"))
 						Behaviors.same
 				}
 

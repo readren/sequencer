@@ -39,11 +39,15 @@ object TaskDomain {
  * @define DoSiThEx DoSiThEx (domain's single-thread executor)
  * @define onCompleteExecutedByDoSiThEx El call-back `onComplete` pasado a `efectuar/ejecutar` es siempre, sin excepción, ejecutado por este actor sin envoltura `try..catch`. Esto es parte del contrato de este trait.
  * @define threadSafe This method is thread-safe.
- * @define executedByDoSiThEx Executed within the DoSiThEx (domain's single-thread executor).
- * @define isGuarded This function is guarded with try-catch. If it throws a non-fatal error the [[Task]] will complete with it as the cause of failure.
+ * @define isExecutedByDoSiThEx Executed within the DoSiThEx (domain's single-thread executor).
+ * @define unhandledErrorsArePropagatedToTaskResult The call to this function is guarded with try-catch. If it throws a non-fatal exception it will be caught and the [[Task]] will complete with a [[Failure]] containing the error.
+ * @define unhandledErrorsAreReported The call to this function is guarded with a try-catch. If it throws a non-fatal exception it will be caught and reported with [[TaskDomain.Assistant.reportFailure()]].
+ * @define isNotGuarded This function call is not guarded with try-catch. Only transformations that meant to be executed in the DoSiThEx are guarded.
  * @define maxRecursionDepthPerExecutor Maximum recursion depth per executor. Once this limit is reached, the recursion continues in a new executor. The result does not depend on this parameter as long as no [[StackOverflowError]] occurs.
+ * @define isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, this parameter should be set to `false`. This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously.
  */
-trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
+trait TaskDomain(assistant: TaskDomain.Assistant) {
+	thisTaskContext =>
 
 
 	/**
@@ -88,50 +92,79 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *
 	 * @tparam A the type of result obtained when executing this task.
 	 */
-	trait Task[+A] { thisTask =>
+	trait Task[+A] {
+		thisTask =>
 
 		/**
 		 * The implementation must trigger the execution of this [[Task]] and then ensure the callback function `onComplete` is called within the $DoSiThEx when the task's execution finishes, either normally or abnormally.
 		 * The implementation should be thread-safe.
 		 * This is the only primitive method of this trait. All the other derive from this one.
 		 *
-		 * @param isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, this parameter should be set to `false`.
-		 * This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously.
+		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
 		 * @param onComplete callback that the implementation must invoke when the execution of this task completes, successfully or not.
 		 * The implementation must ensure the call to this call-back occurs within the $DoSiThEx.
 		 * The implementation may assume that `onComplete` does not throw non-fatal exceptions: it must either terminate normally or fatally, but never with a non-fatal exception.
 		 */
 		def attempt(isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit;
 
-		def engage(onComplete: Try[A] => Unit): Unit = attempt(false) { tryA =>
-			try onComplete(tryA) catch {
-				case NonFatal(cause) => assistant.reportFailure(cause)
+		/**
+		 *
+		 * @param onComplete called when the execution of this task completes, successfully or not. $unhandledErrorsAreReported $isExecutedByDoSiThEx
+		 */
+		def engage(onComplete: Try[A] => Unit): Unit =
+			attempt() { tryA =>
+				try onComplete(tryA) catch {
+					case NonFatal(cause) => assistant.reportFailure(cause)
+				}
 			}
-		}
 
 		/** Triggers the execution of this [[Task]] and returns a [[Future]] of its result.
 		 *
 		 * $threadSafe
 		 *
+		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
 		 * @return a [[Future]] that will be completed when this [[Task]] is completed.
 		 */
-		def promiseAttempt(isRunningInDoSiThEx: Boolean = false): Future[A] = {
+		def toFuture(isRunningInDoSiThEx: Boolean = false): Future[A] = {
 			val promise = Promise[A]()
 			attempt(isRunningInDoSiThEx)(promise.complete)
 			promise.future
 		}
 
-		/** Ejecuta esta [[Task]] ignorando tanto el resultado como si terminó normal o abruptamente.
+		/**
+		 * Triggers the execution of this [[Task]] and returns [[Future]] containing its result wrapped inside a [[Success]].
+		 *
+		 * Is equivalent to {{{ transform(Success.apply).toFuture(isRunningInDoSiThEx) }}}
+		 *
+		 * Useful when failures need to be propagated to the next for-expression (or for-binding).
 		 *
 		 * $threadSafe
+		 *
+		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
+		 * @return a [[Future]] that will be completed when this [[Task]] is completed.
+		 */
+		def toFutureHardy(isRunningInDoSiThEx: Boolean = false): Future[Try[A]] = {
+			val promise = Promise[Try[A]]()
+			attempt(isRunningInDoSiThEx)(tryA => promise.complete(Success(tryA)))
+			promise.future
+		}
+
+
+		/** Triggers the execution of this [[Task]] ignoring the result.
+		 *
+		 * $threadSafe
+		 *
+		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
 		 */
 		inline def attemptAndForget(isRunningInDoSiThEx: Boolean = false): Unit =
 			attempt(isRunningInDoSiThEx)(_ => {})
 
-		/** Ejecuta esta [[Task]] y si termina abruptamente llama a la función recibida.
-		 * La función `manejadorError` recibida será ejecutada por este actor si la acción encapsulada termina abruptamente.
+		/** Triggers the execution of this [[Task]] noticing faulty results.
 		 *
 		 * $threadSafe
+		 *
+		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
+		 * @param errorHandler called when the execution of this task completes with a failure. $isExecutedByDoSiThEx $unhandledErrorsAreReported
 		 */
 		inline def attemptAndForgetHandlingErrors(isRunningInDoSiThEx: Boolean = false)(errorHandler: Throwable => Unit): Unit =
 			attempt(isRunningInDoSiThEx) {
@@ -142,60 +175,68 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 				case _ => ()
 			}
 
-		/** Da una [[Task]] que al ejecutarla:
-		 *  - primero ejecuta ésta Task,
-		 *  - segundo aplica la función `f` al resultado
-		 * 	- último llama a `onComplete` con:
-		 *  	- la excepción lanzada en el segundo paso por la operación `ctorTask` si termina abruptamente,
-		 *  	- o el resultado de la aplicación del segundo paso.
-		 *      Análogo a Future.transform.
+		/**
+		 * Transform this task by applying the given function to the result. Analogous to [[Future.transform]]
+		 * ===Detailed description===
+		 * Creates a [[Task]] that, when executed, triggers the execution of this task and applies the received `resultTransformer` to its result. If the evaluation finishes:
+		 *		- abruptly, completes with the cause.
+		 *		- normally, completes with the result of the evaluation.
 		 *
 		 * $threadSafe
 		 *
-		 * @param resultTransformer función que se aplica al resultado de esta [[Task]] para determinar el resultado de la Task dada. $executedByDoSiThEx $isGuarded
+		 * @param resultTransformer applied to the result of the `originalTask` to obtain the result of this task.
+		 *
+		 * $isExecutedByDoSiThEx
+		 *
+		 * $unhandledErrorsArePropagatedToTaskResult
 		 */
 		inline def transform[B](resultTransformer: Try[A] => Try[B]): Task[B] = new Transform(thisTask, resultTransformer)
 
 
-		/** Composes two [[Task]]s where the second is build from the result of the first, analogous to [[Future.transformWith]].
-		 * Detailed behavior: Gives a [[Task]] which, if executed, would:
-		 *  - first execute this Task, and if that terminates normally:
-		 *  	- second applies the function [[taskBBuilder]] to the result of step one, and if that terminates normally:
-		 *  		- third executes the [[Task]] created in the second step;
-		 *  - finally calls [[onComplete]] passing either:
-		 *  	- if the first three steps terminated normally, the result of the task created in the 3rd step, which may be a [[Failure]].
-		 *  	- if any of them terminated abruptly, the exception thrown there 
-		 *      The behavior of this method is analogous to [[Future.transformWith]].
-		 *      The [[taskBBuilder]] is executed by the $DoSiThEx.
+		/**
+		 * Composes this [[Task]] with a second one that is built from the result of this one. Analogous to [[Future.transformWith]].
+		 * ===Detailed behavior===
+		 * Creates a [[Task]] that, when executed, it will:
+		 *		- Trigger the execution of this task and apply the `taskBBuilder` function to its result. If the evaluation finishes:
+		 *			- abruptly, completes with the cause.
+		 *			- normally with `taskB`, triggers the execution of `taskB` and completes with its result.
 		 *
 		 * $threadSafe
 		 *
-		 * @param taskBBuilder función que se aplica al resultado de esta [[Task]] para crear la [[Task]] que se ejecutará después. $executedByDoSiThEx $isGuarded
+		 * @param taskBBuilder a function that receives the result of `taskA` and builds the task to be executed next. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 */
 		inline def transformWith[B](taskBBuilder: Try[A] => Task[B]): Task[B] =
 			new Compose(thisTask, taskBBuilder)
 
 
-		/** Da una [[Task]] que al ejecutarla primero hace esta Task y luego, si  es exitoso, aplica la función `f` al resultado.
+		/**
+		 * Transforms this task by applying the given function to the result, but only when it is successful. Analogous to [[Future.map]].
+		 * ===Detailed behavior===
+		 * Creates a [[Task]] that, when executed, it will trigger the execution of this task and, if the result is:
+		 *		- `Failure(e)`, completes with that failure.
+		 *		- `Success(a)`, apply `f` to `a` and if the evaluation finishes:
+		 *			- abruptly with `cause`, completes with `Failure(cause)`.
+		 *			- normally with value `b`, completes with `Success(b)`.
 		 *
 		 * $threadSafe
 		 *
-		 * @param f función que transforma el resultado de la Task. $executedByDoSiThEx $isGuarded
+		 * @param f a function that transforms the result of this task, when it is successful. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 */
 		inline def map[B](f: A => B): Task[B] = transform(_ map f)
 
-		/** Da una [[Task]] que al ejecutarla:
-		 *  - primero ejecuta esta [[Task]], y si el resultado es exitoso:
-		 *  	- segundo aplica la función `taskBBuilder` al resultado, y si `taskBBuilder` termina normalmente:
-		 *  		- tercero ejecuta la Task creada en el paso anterior.
-		 *  - último llama a `onComplete` con:
-		 *  	- el resultado de la ejecución del primer paso si es fallido;
-		 *  	- la excepción lanzada en el segundo paso por la operación `ctorTask` si termina abruptamente;
-		 *  	- o el resultado de la ejecución del tercer paso.
+		/**
+		 * Composes this [[Task]] with a second one that is built from the result of this one, but only when this one is successful. Analogous to [[Future.flatMap]].
+		 * ===Detailed behavior===
+		 * Creates a [[Task]] that, when executed, it will:
+		 *		- Trigger the execution of this task and if the result is:
+		 *			- `Failure(e)`, completes with that failure.
+		 *			- `Success(a)`, applies the `taskBBuilder` function to `a`. If the evaluation finishes:
+		 *				- abruptly, completes with the cause.
+		 *				- normally with `taskB`, triggers the execution of `taskB` and completes with its result.
 		 *
 		 * $threadSafe
 		 *
-		 * @param taskBBuilder función que se aplica al resultado del primer paso para crear la [[Task]] que se ejecutaría luego de ésta como parte de la Task dada. $executedByDoSiThEx $isGuarded
+		 * @param taskBBuilder a function that receives the result of `taskA`, when it is a [[Success]], and returns the task to be executed next. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 */
 		def flatMap[B](taskBBuilder: A => Task[B]): Task[B] = transformWith {
 			case Success(s) => taskBBuilder(s);
@@ -203,68 +244,39 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		}
 
 		/** Needed to support filtering and case matching in for-compressions. The for-expressions (or for-bindings) after the filter are not executed if the [[predicate]] is not satisfied.
-		 * Detailed behavior: Gives a [[Task]] that, if executed, it would:
-		 * 	- first executes this [[Task]], and if terminates normally:
-		 * 		- second applies the [[predicate]] to the result of the first step;
-		 * 	- finally calls the [[onComplete]] passing either:
-		 *      if the second step terminated:
-		 * 			- normally and the result is:
-		 * 				- true, a [[Success]] containing the result of the first step;
-		 * 				- false, a [[Failure]] containing [[NoSuchElementException]];
-		 * 			- abruptly, a [[Failure]] containing the cause.
+		 * Detailed behavior: Gives a [[Task]] that, when executed, it will:
+		 *		- executes this [[Task]] and, if the result is a:
+		 *			- [[Failure]], completes with that failure.
+		 *			- [[Success]], applies the `predicate` to its content and if the evaluation finishes:
+		 *				- abruptly, completes with the cause.
+		 *				- normally with a `false`, completes with a [[Failure]] containing a [[NoSuchElementException]].
+		 *				- normally with a `true`, completes with the result of this task.
 		 *
 		 * $threadSafe
+		 *
+		 * @param predicate a predicate that determines which values are propagated to the following for-bindings.
 		 * */
-		def withFilter(predicate: A => Boolean): Task[A] = new Task[A] {
-			def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit = {
-				val runnable: Runnable = () =>
-					thisTask.attempt(true) {
-						case s@Success(a) =>
-							try {
-								if (predicate(a))
-									onComplete(s)
-								else
-									onComplete(Failure(new NoSuchElementException(s"Task filter predicate is not satisfied for $a")))
-							} catch {
-								case NonFatal(e) => onComplete(Failure(e))
-							}
+		inline def withFilter(predicate: A => Boolean): Task[A] = new WithFilter(thisTask, predicate)
 
-						case f@Failure(_) =>
-							onComplete(f)
-					}
-
-				if (isRunningInDoSiThEx) runnable.run();
-				else assistant.queueForSequentialExecution(runnable)
-			}
-		}
-
-		/** Encadena un efecto secundario.
-		 *
-		 * El resultado de la Task dada es el mismo que daría esta Task, ignorando como termine la ejecución de `p` y su resultado.
-		 * Para quien no ve el efecto secundario la diferencia entre esta Task y la dada es solo el tiempo que consume la ejecución.
-		 *
-		 * Específicamente hablando, da una [[Task]] que si se ejecutase:
-		 * 	- primero se ejecutaría esta Task:
-		 * 	- segundo se aplicaría la función `p` al resultado de esta [[Task]].
-		 * 	- ultimo se llamaría a `onComplete` con:
-		 * 		- el resultado de la ejecución del primer paso sea exitoso o fallido;
-		 *
-		 * Es equivalente a:
-		 * {{{
-		 * 		transform[A] { ta =>
-		 * 			try p(ta)
-		 * 		catch { case NonFatal(e) => log.error(e, "..") }
-		 * 	}
-		 * }}}
+		/** Applies the side-effecting function to the result of this task, and returns a new task with the result of this task.
+		 * This method allows to enforce many callbacks that receive the same value are executed in a specified order.
+		 * Note that if one of the chained `andThen` callbacks returns a value or throws an exception, that result is not propagated to the subsequent `andThen` callbacks. Instead, the subsequent `andThen` callbacks are given the result of this task.
+		 * ===Detailed description===
+		 * Returns a task that, when executed:
+		 *		- first executes this task;
+		 *		- second applies the received function to the result and, if the evaluation finishes:
+		 *			- normally, completes with the result of this task.
+		 *			- abruptly with a non-fatal exception, reports the failure cause to [[TaskDomain.Assistant.reportFailure]] and completes with the result of this task.
+		 *			- abruptly with a fatal exception, never completes.
 		 *
 		 * $threadSafe
 		 *
-		 * @param p función parcial que representa el efecto secundario. El resultado de esta función parcial es ignorado.  $executedByDoSiThEx
+		 * @param se a side-effecting function. The call to this function is wrapped in a try-catch block; however, unlike most other operators, unhandled non-fatal exceptions are not propagated to the result of the returned task. $isExecutedByDoSiThEx
 		 */
-		def andThen(p: Try[A] => Any): Task[A] = {
+		def andThen(se: Try[A] => Any): Task[A] = {
 			transform {
 				ta =>
-					try p(ta)
+					try se(ta)
 					catch {
 						case NonFatal(e) => assistant.reportFailure(e)
 					}
@@ -272,39 +284,34 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 			}
 		}
 
-		/** Como `map` pero para las fallas.
-		 * Da una [[Task]] que al ejecutarla:
-		 *  - primero ejecuta esta Task y, si el resultado es fallido y la función parcial `pf` esta definida para dicha falla:
-		 *  	- segundo aplica la función parcial `pf` a la falla;
-		 *  - último llama a `onComplete` con:
-		 *  	- el resultado del primero paso si es exitoso, o fallido donde la función parcial `pf` no este definida;
-		 *  	- la excepción lanzada en el segundo paso por la función `pf` si termina abruptamente;
-		 *  	- o el resultado del segundo paso.
-		 *      Análogo a Future.recover.
+		/** Transforms this task applying the given partial function to failure results. This is like map but for the throwable. Analogous to [[Future.recover]].
+		 * ===detailed description===
+		 * Returns a new [[Task]] that, when executed, executes this task and if the result is:
+		 * 		- a [[Success]] or a [[Failure]] for which `pf` is not defined, completes with the same result.
+		 *		- a [[Failure]] for which `pf` is defined, applies `pf` to it and if the evaluation finishes:
+		 *			- abruptly, completes with the cause.
+		 *			- normally, completes with the result of the evaluation.
 		 *
 		 * $threadSafe
 		 *
-		 * @param pf función parcial que se aplica al resultado del primer paso si es fallido para determinar el resultado de la Task dada. $executedByDoSiThEx $isGuarded
+		 * @param pf the [[PartialFunction]] to apply to the result of this task if it is a [[Failure]]. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 */
 		def recover[B >: A](pf: PartialFunction[Throwable, B]): Task[B] =
 			transform {
 				_.recover(pf)
 			}
 
-		/** Como `flatMap` pero para las fallas
-		 * Da una [[Task]] que al ejecutarla:
-		 *  - primero ejecuta esta Task, y si el resultado es fallido y la función parcial `pf` esta definida para dicha falla:
-		 *  	- segundo aplica la función parcial `pf` a la falla, y si `pf` termina normalmente:
-		 *  		- tercero ejecuta la Task creada en el paso anterior;
-		 *  - último llama a `onComplete` con:
-		 *  	- el resultado del primero paso si es exitoso o fallido donde la función parcial `pf` no este definida;
-		 *  	- la excepción lanzada en el segundo paso por la función parcial `pf` si termina abruptamente;
-		 *  	- o el resultado del tercer paso.
-		 *      Análogo a Future.recoverWith.
+		/** Composes this task with a second one that is built from the result of this one, but only when said result is a [[Failure]] for which the given partial function is defined. This is like flatMap but for the exception. Analogous to [[Future.recoverWith]].
+		 * ===detailed description===
+		 * Returns a new [[Task]] that, when executed, executes this task and if the result is:
+		 * 		- a [[Success]] or a [[Failure]] for which `pf` is not defined, completes with the same result.
+		 *		- a [[Failure]] for which `pf` is defined, applies `pf` to it and if the evaluation finishes:
+		 *			- abruptly, completes with the cause.
+		 *			- normally returning a [[Task]], triggers the execution of said task and completes with its same result.
 		 *
 		 * $threadSafe
 		 *
-		 * @param pf función parcial que se aplica al resultado del primer paso si es fallido para crear la [[Task]] que se ejecutaría luego de ésta como parte de la Task dada. $executedByDoSiThEx $isGuarded
+		 * @param pf función parcial que se aplica al resultado del primer paso si es fallido para crear la [[Task]] que se ejecutaría luego de ésta como parte de la Task dada. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 */
 		def recoverWith[B >: A](pf: PartialFunction[Throwable, Task[B]]): Task[B] = {
 			transformWith[B] {
@@ -314,7 +321,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		}
 
 		/**
-		 * Creates a new [[Task]] that is executed repeatedly until applying a condition to its result and the number of already completed cycles yields [[Some]].
+		 * Repeats this task until applying the received function yields [[Some]].
 		 * ===Detailed description===
 		 * Creates a [[Task]] that, when executed, it will:
 		 * - execute this task producing the result `tryA`
@@ -327,8 +334,9 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 * @param condition function that decides if the loop continues or not based on:
 		 * 	- the number of already completed cycles,
 		 * 	- and the result of the last execution of the `taskA`.
+		 * The loop ends when this function returns a [[Some]]. Its content will be the final result.
 		 *
-		 * $executedByDoSiThEx $isGuarded
+		 * $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 * @return a new [[Task]] that, when executed, repeatedly executes this task and applies the `condition` to the task's result until the function's result is [[Some]]. The result of this task is the contents of said [[Some]] unless any execution of the `taskA` or `condition` terminates abruptly in which case this task result is the cause.
 		 * */
 		inline def repeatedHardyUntilSome[B](maxRecursionDepthPerExecutor: Int = 9)(condition: (Int, Try[A]) => Option[Try[B]]): Task[B] =
@@ -349,8 +357,9 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 * @param condition function that decides if the loop continues or not based on:
 		 * 	- the number of already completed cycles,
 		 * 	- and the result of the last execution of the `taskA`.
+		 * The loop ends when this function returns a [[Some]]. Its content will be the final result.
 		 *
-		 * $executedByDoSiThEx $isGuarded
+		 * $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 * @return a new [[Task]] that, when executed, repeatedly executes this task and applies the `condition` to the task's result until the function's result is [[Some]]. The result of this task is the contents of said [[Some]] unless any execution of the `taskA` or `condition` terminates abruptly in which case this task result is the cause.
 		 * */
 		inline def repeatedUntilSome[B](maxRecursionDepthPerExecutor: Int = 9)(condition: (Int, A) => Option[Try[B]]): Task[B] =
@@ -367,20 +376,20 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 			repeatedHardyUntilSome(maxRecursionDepthPerExecutor)(Function.untupled(pf.lift))
 
 		/**
-		 * Creates a task that, when executed, repeatedly executes this [[Task]] while a condition returns [[None]].
+		 * Repeats this [[Task]] while the given function returns [[None]].
 		 * ===Detailed behavior:===
-		 * When this [[Task]] is executed, it will:
-		 *  - Try to apply the `condition` function to `(n, ts0)` where `n` is the number of already completed evaluations of it.
-		 *  - If the evaluation completes:
+		 * Creates a [[Task]] that, when executed, it will:
+		 *  - Apply the `condition` function to `(n, ts0)` where `n` is the number of already completed evaluations of it.
+		 *  - If the evaluation finishes:
 		 *  	- Abruptly, completes with the cause.
-		 *  	- Normally, returning `Some(b)`, completes with `b`.
-		 *  	- Normally, returning `None`, executes the `taskA` and goes back to the first step replacing `ts0` with the result.
+		 *  	- Normally returning `Some(b)`, completes with `b`.
+		 *  	- Normally returning `None`, executes the `taskA` and goes back to the first step replacing `ts0` with the result.
 		 *
 		 * $onCompleteExecutedByDoSiThEx
 		 *
 		 * @param ts0 the value passed as second parameter to `condition` the first time it is evaluated.
 		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
-		 * @param condition determines whether a new cycle should be performed based on the number of times it has already been evaluated and either the result of the previous cycle or `ta0` if no cycle has been done yet. $executedByDoSiThEx $isGuarded
+		 * @param condition determines whether a new cycle should be performed based on the number of times it has already been evaluated and either the result of the previous cycle or `ta0` if no cycle has been done yet. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 * @tparam S a supertype of `A`
 		 * @tparam B the type of the result of this task.
 		 */
@@ -402,7 +411,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 *
 		 * @param ts0 the value passed as second parameter to `condition` the first time it is evaluated.
 		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
-		 * @param pf determines whether a new cycle should be performed based on the number of times it has already been evaluated and either the result of the previous cycle or `ta0` if no cycle has been done yet. $executedByDoSiThEx $isGuarded
+		 * @param pf determines whether a new cycle should be performed based on the number of times it has already been evaluated and either the result of the previous cycle or `ta0` if no cycle has been done yet. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 * @tparam S a supertype of `A`
 		 * @tparam B the type of the result of this task.
 		 */
@@ -425,82 +434,116 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 
 		/** Creates a [[Task]] whose execution never ends.
 		 *
-		 * $threadSafe */
+		 * $threadSafe
+		 *
+		 * @return the task described in the method description.
+		 * */
 		inline def never: Task[Nothing] = new Never
 
-		/** Creates a [[Task]] whose result is immediately given. The result of its execution is always the given value.
+		/** Creates a [[Task]] whose result is calculated at the call site even before the task is constructed.  The result of its execution is always the provided value.
 		 *
 		 * $threadSafe
+		 *
+		 * @param tryA the value that the returned task will give as result every time it is executed.
+		 * @return the task described in the method description.
 		 */
 		inline def immediate[A](tryA: Try[A]): Task[A] = new Immediate(tryA);
 
-		/** Creates a [[Task]] whose result is immediately given and always succeeds. The result of its execution is always a [[Success]] with the given value.
+		/** Creates a [[Task]] that always succeeds with a result that is calculated at the call site even before the task is constructed. The result of its execution is always a [[Success]] with the provided value.
 		 *
 		 * $threadSafe
+		 *
+		 * @param a the value contained in the [[Success]] that the returned task will give as result every time it is executed.
+		 * @return the task described in the method description.
 		 */
 		inline def successful[A](a: A): Task[A] = new Immediate(Success(a));
 
-		/** Creates a [[Task]] whose result is immediately given and always fails. The result of its execution is always a [[Failure]] with the given [[Throwable]]
+		/** Creates a [[Task]] that always fails with a result that is calculated at the call site even before the task is constructed. The result of its execution is always a [[Failure]] with the provided [[Throwable]]
 		 *
 		 * $threadSafe
+		 *
+		 * @param throwable the exception contained in the [[Failure]] that the returned task will give as result every time it is executed.
+		 * @return the task described in the method description.
 		 */
 		inline def failed[A](throwable: Throwable): Task[A] = new Immediate(Failure(throwable));
 
-		/** Crea una Task que al ejecutarla programa la realización por parte de este actor de la `acción` recibida.
-		 * Y luego, después que la `acción` haya sido efectuada, llama a `onComplete` pasándole:
-		 * - el resultado si `acción` termina normalmente;
-		 * - o `Failure(excepción)` si la `acción` termina abruptamente.
+		/**
+		 * Creates a task whose result is calculated withing the $DoSiThEx.
+		 * ===Detailed behavior===
+		 * Creates a task that, when executed, evaluates the `resultSupplier` within the $DoSiThEx. If it finishes:
+		 *		- abruptly, completes with a [[Failure]] with the cause.
+		 *		- normally, completes with the evaluation's result.
 		 *
 		 * $$threadSafe
 		 *
-		 * @param resultBuilder La acción que estará encapsulada en la Task creada. $executedByDoSiThEx
+		 * @param resultSupplier the supplier of the result. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+		 * @return the task described in the method description.
 		 */
-		inline def own[A](resultBuilder: () => Try[A]): Task[A] = new Own(resultBuilder);
+		inline def own[A](resultSupplier: () => Try[A]): Task[A] = new Own(resultSupplier);
 
-		/** Crea una Task que al ejecutarla programa la realización por parte de este actor de la `acción` recibida.
-		 * Y luego, después que la `acción` haya sido efectuada, llama a `onComplete` pasándole:
-		 * - `Success(resultado)` si la `acción` termina normalmente;
-		 * - o `Failure(excepción)` si la `acción` termina abruptamente.
+		/**
+		 * Creates a task whose result is calculated withing the $DoSiThEx and completes successfully as long as the evaluation of the supplier finishes normally.
+		 * ===Detailed behavior===
+		 * Creates a task that, when executed, evaluates the `resultSupplier` within the $DoSiThEx. If it finishes:
+		 *		- abruptly, completes with a [[Failure]] containing the cause.
+		 *		- normally, completes with a [[Success]] containing the evaluation's result.
 		 *
-		 * Equivale a {{{ propia { () => Success(accion()) } }}}
+		 * Is equivalent to {{{ own { () => Success(resultSupplier()) } }}}
 		 *
 		 * $threadSafe
 		 *
-		 * @param resultBuilder La acción que estará encapsulada en la Task creada. $executedByDoSiThEx
-		 *
+		 * @param resultSupplier La acción que estará encapsulada en la Task creada. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+		 * @return the task described in the method description.
 		 */
-		inline def mine[A](resultBuilder: () => A): Task[A] = new Own(() => Success(resultBuilder()));
+		inline def mine[A](resultSupplier: () => A): Task[A] = new Own(() => Success(resultSupplier()));
 
 		/** Create a [[Task]] that just waits the completion of the specified [[Future]]. The result of the task, when executed, is the result of the received [[Future]].
 		 *
 		 * $threadSafe
 		 *
 		 * @param resultFuture the future to wait for.
+		 * @return the task described in the method description.
 		 */
 		inline def wait[A](resultFuture: Future[A]): Task[A] = new Wait(resultFuture);
 
 		/** Creates a [[Task]] that, when executed, triggers the execution of a process in an alien executor and waits its result, successful or not.
-		 * The process executor may be the $DoSiThEx but if that is the intention [[Own]] would be more appropriate.
+		 * The process executor is usually foreign but may be the $DoSiThEx.
 		 *
 		 * $threadSafe
 		 *
-		 * @param futureBuilder a function that starts the process and return a [[Future]] of its result.
+		 * @param futureBuilder a function that starts the process and return a [[Future]] of its result. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+		 * @return the task described in the method description.
 		 */
 		inline def alien[A](futureBuilder: () => Future[A]): Task[A] = new Alien(futureBuilder);
 
-		/** Crea una tarea que al ejecutarla:
-		 *  - primero ejecuta las `tareaA` y `tareaB` en simultaneo (en oposición a esperar que termine una para ejecutar la otra)
-		 *  - segundo, cuando ambas terminan, sea exitosamente o fallidamente, se aplica la función `f` al resultado de las dos tareas.
-		 *  - ultimo llama a `cuandooCompleta`con:
-		 *  	- la excepción lanzada por la función `f` si termina abruptamente;
-		 *  	- o el resultado de f si termina normalmente
+		/**
+		 * Creates a [[Task]] that simultaneously triggers the execution of two tasks and returns their results combined with the received function.
+		 * ===Detailed behavior===
+		 * Creates a new [[Task]] that, when executed:
+		 *		- triggers the execution of both: `taskA` and `taskB`
+		 *		- when both are completed, whether normal or abruptly, the function `f` is applied to their results and if the evaluation finishes:
+		 *			- abruptly, completes with a [[Failure]] containing the cause.
+		 *			- normally, completes with the evaluation's result.
 		 *
 		 * $threadSafe
+		 *
+		 * @param taskA a task
+		 * @param taskB a task
+		 * @param f the function that combines the results of the `taskA` and `taskB`. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+		 * @return the task described in the method description.
 		 */
 		inline def combine[A, B, C](taskA: Task[A], taskB: Task[B])(f: (Try[A], Try[B]) => Try[C]): Task[C] =
 			new Combine(taskA, taskB, f)
 
-		/** Crea una tarea que al ejecutarla ejecuta las tareas recibidas en paralelo, y da como resultado una lista con sus resultados en el mismo orden. */
+		/**
+		 * Creates a task that, when executed, simultaneously triggers the execution of all the [[Task]]s in the received list, and completes with a list containing their results in the same order.
+		 *
+		 * $threadSafe
+		 *
+		 * @param tasks the list of [[Task]]s that the returned task will trigger simultaneously to combine their results.
+		 * @return the task described in the method description.
+		 *
+		 * */
 		def sequence[A](tasks: List[Task[A]]): Task[List[A]] = {
 			@tailrec
 			def loop(incompleteResult: Task[List[A]], remainingTasks: List[Task[A]]): Task[List[A]] = {
@@ -627,7 +670,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 * 	- creates and executes a control task and, depending on its result, either:
 		 *		- completes.
 		 *		- or creates and executes an interleaved task and then goes back to the first step.
-		 *          WARNING: the execution of the returned task will never end if the control task always returns [[Right]].
+		 * WARNING: the execution of the returned task will never end if the control task always returns [[Right]].
 		 *
 		 * $threadSafe
 		 *
@@ -676,7 +719,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 			else
 				assistant.queueForSequentialExecution(() => onComplete(tryA))
 
-		override def promiseAttempt(isRunningInDoSiThEx: Boolean): Future[A] =
+		override def toFuture(isRunningInDoSiThEx: Boolean): Future[A] =
 			Future.fromTry(tryA)
 	}
 
@@ -686,7 +729,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
-	 * @param resultSupplier builds the result of this [[Task]]. $executedByDoSiThEx $isGuarded
+	 * @param resultSupplier builds the result of this [[Task]]. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 */
 	final class Own[+A](resultSupplier: () => Try[A]) extends Task[A] {
 		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit = {
@@ -720,26 +763,68 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
-	 * @param futureBuilder a function that starts the process and return a [[Future]] of its result.
+	 * @param futureBuilder a function that starts the process and return a [[Future]] of its result. $isNotGuarded
 	 * */
 	final class Alien[+A](futureBuilder: () => Future[A]) extends Task[A] {
 		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit =
 			futureBuilder().onComplete(onComplete)(ownSingleThreadExecutionContext)
 	}
 
-	/** [[Task]] que al ejecutarla:
-	 *  - primero ejecuta la `Task` recibida;
-	 *  - segundo aplica la función `f` al resultado y, si la aplicación termina normalmente:
-	 *  	- tercero ejecuta la Task creada;
-	 *  - último llama a `onComplete` con:
-	 *  	- la excepción lanzada en el segundo paso por la operación `ctorTask` si termina abruptamente;
-	 *  	- o el resultado de la ejecución del tercer paso.
-	 *
-	 * The [[resultTransformer]] is executed by the $DoSiThEx.
+
+	/**
+	 * A [[Task]] that transforms the received task by converting successful results to `Failure(new NoSuchElementException())` if it does not satisfy the received `predicate`.
+	 * Needed to support filtering and case matching in for-compressions. The for-expressions (or for-bindings) after the filter are not executed if the [[predicate]] is not satisfied.
+	 * ===Detailed behavior===
+	 * A [[Task]] that, when executed, it will:
+	 * - executes this [[Task]] and, if the result is a:
+	 *		- [[Failure]], completes with that failure.
+	 *		- [[Success]], applies the `predicate` to its content and if the evaluation finishes:
+	 *			- abruptly, completes with the cause.
+	 *			- normally with a `false`, completes with a [[Failure]] containing a [[NoSuchElementException]].
+	 *			- normally with a `true`, completes with the result of this task.
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
-	 * @param resultTransformer función que se aplica al resultado de esta [[Task]] para crear la [[Task]] que se ejecutará después. $executedByDoSiThEx $isGuarded
+	 * */
+	final class WithFilter[A](taskA: Task[A], predicate: A => Boolean) extends Task[A] {
+		def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit = {
+			def work(): Unit = {
+				taskA.attempt(true) {
+					case s@Success(a) =>
+						try {
+							if (predicate(a))
+								onComplete(s)
+							else
+								onComplete(Failure(new NoSuchElementException(s"Task filter predicate is not satisfied for $a")))
+						} catch {
+							case NonFatal(e) => onComplete(Failure(e))
+						}
+
+					case f@Failure(_) =>
+						onComplete(f)
+				}
+			}
+
+			if (isRunningInDoSiThEx) work();
+			else assistant.queueForSequentialExecution(() => work())
+		}
+	}
+
+
+	/**
+	 * A [[Task]] that transform the result of another task.
+	 * ===Detailed description===
+	 * A [[Task]] that, when executed, triggers the execution of the `originalTask` and applies the received `resultTransformer` to its results. If the evaluation finishes:
+	 * - abruptly, completes with the cause.
+	 * - normally, completes with the result of the evaluation.
+	 *
+	 * $onCompleteExecutedByDoSiThEx
+	 *
+	 * @param resultTransformer applied to the result of the `originalTask` to obtain the result of this task.
+	 *
+	 * $isExecutedByDoSiThEx
+	 *
+	 * $unhandledErrorsArePropagatedToTaskResult
 	 */
 	final class Transform[+A, +B](originalTask: Task[A], resultTransformer: Try[A] => Try[B]) extends Task[B] {
 		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
@@ -751,13 +836,18 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		}
 	}
 
-
-	/** Task que representa la composición de dos Tasks donde la segunda es creada a partir del resultado de la primera.
+	/**
+	 * A [[Task]] that composes two [[Task]]s where the second is build from the result of the first.
+	 * ===Detailed behavior===
+	 * A [[Task]] which, when executed, it will:
+	 *  - Trigger the execution of `taskA` and apply the `taskBBuilder` function to its result. If the evaluation finishes:
+	 *		- abruptly, completes with the cause.
+	 *		- normally with `taskB`, triggers the execution of `taskB` and completes with its result.
 	 *
-	 * $onCompleteExecutedByDoSiThEx
+	 * $threadSafe
 	 *
-	 * @param taskA Task que se ejecutaría antes
-	 * @param taskBBuilder constructor de la Task que se ejecutaría después. Este constructor es ejecutado por este actor cuando la primer Task terminó.
+	 * @param taskA the task that is executed first.
+	 * @param taskBBuilder a function that receives the result of the execution of `taskA` and builds the task to be executed next. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 */
 	final class Compose[+A, +B](taskA: Task[A], taskBBuilder: Try[A] => Task[B]) extends Task[B] {
 		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit =
@@ -771,13 +861,13 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	}
 
 
-	/** [[Task]] que al ejecutarla:
-	 *  - primero ejecuta las `tareaA` y `tareaB` en simultaneo (en oposición a esperar que termine una para ejecutar la otra)
-	 *  - segundo, cuando ambas tareas terminan, sea exitosamente o fallidamente, se aplica la función `f` al resultado de las dos tareas.
-	 *  - ultimo llama a `cuandooCompleta`con:
-	 *  	- la excepción lanzada por la función `f` si termina abruptamente;
-	 *  	- o el resultado de f si termina normalmente
+	/** A [[Task]] that, when executed:
+	 *		- triggers the execution of both: `taskA` and `taskB`;
+	 *		- when both are completed, whether normal or abruptly, the function `f` is applied to their results and if the evaluation finishes:
+	 *			- abruptly, completes with the cause.
+	 *			- normally, completes with the result.
 	 *
+	 * $threadSafe
 	 * $onCompleteExecutedByDoSiThEx
 	 */
 	final class Combine[+A, +B, +C](taskA: Task[A], taskB: Task[B], f: (Try[A], Try[B]) => Try[C]) extends Task[C] {
@@ -813,24 +903,25 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 
 
 	/**
-	 * A [[Task]] that executes a task until applying a condition to its result yields [[Some]].
+	 * A [[Task]] that executes the received task until applying the received function yields [[Some]].
 	 * ===Detailed description===
 	 * A [[Task]] that, when executed, it will:
-	 * - execute the `taskA` producing the result `tryA`
-	 * - apply `condition` to `(completedCycles, tryA)`. If the evaluation finishes:
-	 * 		- abruptly, completes with the cause.
-	 * 		- normally with `Some(tryB)`, completes with `tryB`
-	 * 		- normally with `None`, goes back to the first step.
+	 *		- execute the `taskA` producing the result `tryA`
+	 *		- apply `condition` to `(completedCycles, tryA)`. If the evaluation finishes:
+	 *			- abruptly, completes with the cause.
+	 *			- normally with `Some(tryB)`, completes with `tryB`
+	 *			- normally with `None`, goes back to the first step.
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
 	 * @param taskA the task to be repeated.
 	 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
 	 * @param condition function that decides if the loop continues or not based on:
-	 * 	- the number of already completed cycles,
-	 * 	- and the result of the last execution of the `taskA`.
+	 *		- the number of already completed cycles,
+	 *		- and the result of the last execution of the `taskA`.
+	 * The loop ends when this function returns a [[Some]]. Its content will be the final result of this task.
 	 *
-	 * $executedByDoSiThEx $isGuarded
+	 * $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 * */
 	final class RepeatHardyUntilSome[+A, +B](taskA: Task[A], maxRecursionDepthPerExecutor: Int = 9)(condition: (Int, Try[A]) => Option[Try[B]]) extends Task[B] {
 
@@ -879,7 +970,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * @param taskA the task to be repeated
 	 * @param ta0 the value passed as second parameter `condition` the first time it is evaluated.
 	 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
-	 * @param condition determines whether a new cycle should be performed based on the number of times it has already been evaluated and either the result of the previous cycle or `ta0` if no cycle has been done yet. $executedByDoSiThEx $isGuarded
+	 * @param condition determines whether a new cycle should be performed based on the number of times it has already been evaluated and either the result of the previous cycle or `ta0` if no cycle has been done yet. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 * @tparam A the type of the result of the repeated task `taskA`.
 	 * @tparam B the type of the result of this task.
 	 */
@@ -919,7 +1010,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *
 	 * @param tryA0 the initial value wrapped in a `Try`, used in the first call to `checkAndBuild`.
 	 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
-	 * @param checkAndBuild a function that takes the number of already completed cycles and the last task result wrapped in a `Try`, returning an `Either[Try[B], Task[A]]` indicating the next action to perform.	$executedByDoSiThEx $isGuarded *
+	 * @param checkAndBuild a function that takes the number of already completed cycles and the last task result wrapped in a `Try`, returning an `Either[Try[B], Task[A]]` indicating the next action to perform.	$isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult *
 	 */
 	final class WhileRightRepeatHardy[+A, +B](tryA0: Try[A], maxRecursionDepthPerExecutor: Int = 9)(checkAndBuild: (Int, Try[A]) => Either[Try[B], Task[A]]) extends Task[B] {
 		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
@@ -962,7 +1053,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *
 	 * @param a0 the initial value used in the first call to `buildAndCheck`.
 	 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
-	 * @param buildAndCheck a function that takes the number of already completed cycles and the last task result, returning a new task that yields an `Either[Try[B], A]` indicating the next action to perform. $executedByDoSiThEx $isGuarded
+	 * @param buildAndCheck a function that takes the number of already completed cycles and the last task result, returning a new task that yields an `Either[Try[B], A]` indicating the next action to perform. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 */
 	final class RepeatUntilLeft[+A, +B](a0: A, maxRecursionDepthPerExecutor: Int = 9)(buildAndCheck: (Int, A) => Task[Either[Try[B], A]]) extends Task[B] {
 		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
@@ -1036,11 +1127,11 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		}
 	}
 
-
 	/** A commitment to complete a [[Task]].
 	 * Analogous to [[scala.concurrent.Promise]] but for a [[Task]] instead of a [[scala.concurrent.Future]].
 	 * */
-	final class Commitment[A] { thisCommitment =>
+	final class Commitment[A] {
+		thisCommitment =>
 		private var oResult: Option[Try[A]] = None;
 		private var onCompletedObservers: List[Try[A] => Unit] = Nil;
 
@@ -1077,7 +1168,10 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 						// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
 						this.onCompletedObservers = Nil
 					case Some(value) =>
-						onAlreadyCompleted(value);
+						try onAlreadyCompleted(value)
+						catch {
+							case NonFatal(cause) => assistant.reportFailure(cause)
+						}
 				}
 			};
 			this;
@@ -1092,7 +1186,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		/** Programs the completion of the [[task]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
 		def completeWith(otherTask: Task[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
 			if (otherTask ne this.task)
-				otherTask.attempt(isRunningInDoSiThEx = false)(result => complete(result)(onAlreadyCompleted));
+				otherTask.attempt()(result => complete(result)(onAlreadyCompleted));
 			this
 		}
 	}

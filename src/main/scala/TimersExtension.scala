@@ -18,11 +18,12 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: TaskDomain =
 
 	import TimersExtension._;
 
-	private var secuenciador: Long = 0;
+	/** Do not refer to this instance variable. It is private to the [[getTimerId]] method. */
+	private var lastTimerId: Long = 0;
 
-	private def genIdTemporizador(): Long = {
-		secuenciador += 1;
-		secuenciador
+	private def genTimerId(): Long = {
+		lastTimerId += 1;
+		lastTimerId
 	}
 
 	inline def queueForSequentialExecutionDelayed(key: Long, delay: FiniteDuration)(runnable: Runnable): Unit = assistant.queueForSequentialExecutionDelayed(key, delay, runnable)
@@ -91,7 +92,7 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: TaskDomain =
 			def work(): Unit = {
 				var hasElapsed = false;
 				var hasCompleted = false;
-				val timerId = genIdTemporizador();
+				val timerId = genTimerId();
 				task.attempt(isRunningInDoSiThEx = true) { tryA =>
 					if (!hasElapsed) {
 						cancelDelayedExecution(timerId);
@@ -122,7 +123,7 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: TaskDomain =
 					case Success(Some(Failure(e))) => onComplete(Failure(e))
 					case Success(None) =>
 						if (remainingExecutions > 1) {
-							val timerId = genIdTemporizador();
+							val timerId = genTimerId();
 							queueForSequentialExecutionDelayed(timerId, delay) { () => loop(remainingExecutions - 1) }
 						} else
 							onComplete(Success(None))

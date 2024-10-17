@@ -21,9 +21,9 @@ object Test {
 
 			def apply: Behavior[Pregunta] = {
 				Behaviors.setup { actorContext =>
-					AkkaIntegration.setup(actorContext) { taskContext =>
+					ActorTaskDomain.setup(actorContext) { taskContext =>
 						Behaviors.receiveMessage { pregunta =>
-							taskContext.Task.successful(Respuesta(actorContext.self, "Hola")).attemptAndSend(true, pregunta.replyTo)
+							taskContext.Task.successful(Respuesta(actorContext.self, "Hola")).attemptAndSend(pregunta.replyTo, true)
 
 							Behaviors.same
 						}
