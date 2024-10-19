@@ -175,6 +175,9 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 				case _ => ()
 			}
 
+		inline def foreach(consumer: Try[A] => Unit): Task[Unit] =
+			new Foreach[A](thisTask, consumer)
+
 		/**
 		 * Transform this task by applying the given function to the result. Analogous to [[Future.transform]]
 		 * ===Detailed description===
@@ -708,8 +711,12 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[Nothing] => Unit): Unit = ()
 	}
 
-	/** Task que al ejecutarla da como resultado el valor recibido.
+	/** A [[Task]] whose result is calculated at the call site even before the task is constructed. The result of its execution is always the provided value.
 	 *
+	 * $threadSafe
+	 *
+	 * @param tryA the value that the returned task will give as result every time it is executed.
+	 * @return the task described in the method description.
 	 * $onCompleteExecutedByDoSiThEx
 	 */
 	final class Immediate[+A](tryA: Try[A]) extends Task[A] {
@@ -721,6 +728,11 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 
 		override def toFuture(isRunningInDoSiThEx: Boolean): Future[A] =
 			Future.fromTry(tryA)
+
+		override def toFutureHardy(isRunningInDoSiThEx: Boolean = false): Future[Try[A]] =
+			Future.successful(tryA)
+
+
 	}
 
 	/** A [[Task]] that, when executed, calls the `resultSupplier` within the $DoSiThEx and if it finishes:
@@ -772,16 +784,39 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 
 
 	/**
+	 * A [[Task]] that consumes the results of the received task for its side effects.
+	 * ===Detailed behavior===
+	 * A [[Task]] that, when executed, it will:
+	 *		- trigger the execution of `taskA` and tries to apply the `consumer` to its result. If the evaluation finishes:
+	 *			- abruptly, completes with a [[Failure]] containing the cause.
+	 *			- normally, completes with `Success(())`.
+	 */
+	final class Foreach[A](taskA: Task[A], consumer: Try[A] => Unit) extends Task[Unit] {
+		def attempt(isRunningInDoSiThEx: Boolean = false)(onComplete: Try[Unit] => Unit): Unit = {
+			def work(): Unit = {
+				taskA.attempt(true) { tryA =>
+					try onComplete(Success(consumer(tryA)))
+					catch {
+						case NonFatal(cause) => onComplete(Failure(cause))
+					}
+				}
+			}
+			if isRunningInDoSiThEx then work()
+			else queueForSequentialExecution(() => work())
+		}
+	}
+
+	/**
 	 * A [[Task]] that transforms the received task by converting successful results to `Failure(new NoSuchElementException())` if it does not satisfy the received `predicate`.
 	 * Needed to support filtering and case matching in for-compressions. The for-expressions (or for-bindings) after the filter are not executed if the [[predicate]] is not satisfied.
 	 * ===Detailed behavior===
 	 * A [[Task]] that, when executed, it will:
-	 * - executes this [[Task]] and, if the result is a:
-	 *		- [[Failure]], completes with that failure.
-	 *		- [[Success]], applies the `predicate` to its content and if the evaluation finishes:
-	 *			- abruptly, completes with the cause.
-	 *			- normally with a `false`, completes with a [[Failure]] containing a [[NoSuchElementException]].
-	 *			- normally with a `true`, completes with the result of this task.
+	 *		- trigger the execution of `taskA` and, if the result is a:
+	 *			- [[Failure]], completes with that failure.
+	 *			- [[Success]], tries to apply the `predicate` to its content. If the evaluation finishes:
+	 *				- abruptly, completes with the cause.
+	 *				- normally with a `false`, completes with a [[Failure]] containing a [[NoSuchElementException]].
+	 *				- normally with a `true`, completes with the result of this task.
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
@@ -815,8 +850,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 	 * A [[Task]] that transform the result of another task.
 	 * ===Detailed description===
 	 * A [[Task]] that, when executed, triggers the execution of the `originalTask` and applies the received `resultTransformer` to its results. If the evaluation finishes:
-	 * - abruptly, completes with the cause.
-	 * - normally, completes with the result of the evaluation.
+	 *		- abruptly, completes with the cause.
+	 *		- normally, completes with the result of the evaluation.
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
@@ -840,9 +875,9 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 	 * A [[Task]] that composes two [[Task]]s where the second is build from the result of the first.
 	 * ===Detailed behavior===
 	 * A [[Task]] which, when executed, it will:
-	 *  - Trigger the execution of `taskA` and apply the `taskBBuilder` function to its result. If the evaluation finishes:
-	 *		- abruptly, completes with the cause.
-	 *		- normally with `taskB`, triggers the execution of `taskB` and completes with its result.
+	 *		- Trigger the execution of `taskA` and apply the `taskBBuilder` function to its result. If the evaluation finishes:
+	 *			- abruptly, completes with the cause.
+	 *			- normally with `taskB`, triggers the execution of `taskB` and completes with its result.
 	 *
 	 * $threadSafe
 	 *

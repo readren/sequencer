@@ -124,7 +124,6 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 	}
 
 
-
 	test("if a transformation throws an exception the task should complete with that exception if it is non-fatal, or never complete if it is fatal.") {
 		PropF.forAllF { (task: Task[Int], exception: Throwable) =>
 
@@ -135,13 +134,27 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 					task.recover { case cause => 0 }
 				}.toFutureHardy()
 
+				// Build a task that completes with `true` as soon as the `exception` is found among the unhandled exceptions logged in the `unhandledExceptions` set; or `false` if it isn't found after 99 milliseconds.
+				val exceptionWasNotHandled = sleep1ms
+					// Check if the thread of DoSiThEx was terminated abruptly due to an unhandled exception
+					.flatMap { _ =>
+						Task.mine { () => unhandledExceptions.remove(exception.getMessage) }
+					}
+					// repeat the previous until the exception is found among the unhandled exceptions but no more than 99 times.
+					.repeatedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
+						if theExceptionWasFoundAmongTheUnhandledOnes then Some(Success(true))
+						else if tries > 99 then Some(Success(false))
+						else None
+					}.toFuture()
+
 				// Depending on the kind of exception, fatal or not, the check is very different.
 				if NonFatal(exception) then {
 					// When the exception is non-fatal the task should complete with a Failure containing the cause.
-					future.map {
+					val nonFatalWasHandled = future.map {
 						case Failure(`exception`) => true
 						case _ => false
 					}
+					Future.firstCompletedOf(List(exceptionWasNotHandled.map(!_), nonFatalWasHandled))
 				} else {
 					// When the exception is fatal it should remain unhandled, causing the doSiThEx thread to terminate. Consequently, the exception will be logged in the unhandledExceptions set, and the task and associated Future will never complete.
 					// The following future will complete with `false` if the fatal exception was handled. Otherwise, it will never complete.
@@ -150,55 +163,62 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 						false
 					}
 
-					// Build a task that completes with `true` as soon as the `exception` is found among the unhandled exceptions logged in the `unhandledExceptions` set; or `false` if it isn't found after 99 milliseconds.
-					val fatalWasNotHandled = sleep1ms
-						// Check if the thread of DoSiThEx was terminated abruptly due to an unhandled exception
-						.flatMap { _ =>
-							Task.mine { () => unhandledExceptions.remove(exception.getMessage) }
-						}
-						// repeat the previous until the exception is found among the unhandled exceptions but no more than 99 times.
-						.repeatedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
-							if theExceptionWasFoundAmongTheUnhandledOnes then Some(Success(true))
-							else if tries > 99 then Some(Success(false))
-							else None
-						}.toFuture()
 
-					// The result of only one of the two futures, `fatalWasHandled` and `fatalWasNotHandled`, is enough to know if the check is passed. So get the result of the one that completes first.
-					Future.firstCompletedOf(List(fatalWasNotHandled, fatalWasHandled))
+					// The result of only one of the two futures, `fatalWasHandled` and `exceptionWasNotHandled`, is enough to know if the check is passed. So get the result of the one that completes first.
+					Future.firstCompletedOf(List(exceptionWasNotHandled, fatalWasHandled))
 				}
 
 			}
 
 			def f1[A, B](a: A): B = throw exception
+
 			def f2[A, B, C](a: A, b: B): C = throw exception
 
 			for {
+				foreachTestResult <- check(_.foreach(_ => throw exception).map(_ => 0))
 				mapTestResult <- check(_.map(f1))
 				flatMapTestResult <- check(_.flatMap(f1))
 				withFilterTestResult <- check(_.withFilter(f1))
 				transformTestResult <- check(_.transform(f1))
 				transformWithTestResult <- check(_.transformWith(f1))
 				recoverTestResult <- check(_.transform { _ => Failure(new Exception("for recover")) }.recover(f1))
-				recoverWithTestResult <- check(_.transform { _ => Failure(new Exception("for recoverWith")) }.recoverWith {f1})
+				recoverWithTestResult <- check(_.transform { _ => Failure(new Exception("for recoverWith")) }.recoverWith(f1))
 				repeatedHardyUntilSomeTestResult <- check(_.repeatedHardyUntilSome()(f2))
 				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome()(f2))
 				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined()(f2))
 				repeatedWhileNoneTestResult <- check(_.repeatedWhileNone(Success(0))(f2))
 				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0))(f2))
-			} yield assert(
-				mapTestResult
-				&& flatMapTestResult
-				&& withFilterTestResult
-				&& transformTestResult
-				&& transformWithTestResult
-				&& recoverTestResult
-				&& recoverWithTestResult
-				&& repeatedHardyUntilSomeTestResult
-				&& repeatedUntilSomeTestResult
-				&& repeatedUntilDefinedTestResult
-				&& repeatedWhileNoneTestResult
-				&& repeatedWhileUndefinedTestResult
-			)
+			} yield
+				assert(
+					foreachTestResult
+						&& mapTestResult
+						&& flatMapTestResult
+						&& withFilterTestResult
+						&& transformTestResult
+						&& transformWithTestResult
+						&& recoverTestResult
+						&& recoverWithTestResult
+						&& repeatedHardyUntilSomeTestResult
+						&& repeatedUntilSomeTestResult
+						&& repeatedUntilDefinedTestResult
+						&& repeatedWhileNoneTestResult
+						&& repeatedWhileUndefinedTestResult,
+					s"""
+					   |foreach: $foreachTestResult
+					   |map: $mapTestResult
+					   |flatMap: $flatMapTestResult
+					   |withFilter: $withFilterTestResult
+					   |transform: $transformTestResult
+					   |transformWith: $transformWithTestResult
+					   |recover: $recoverTestResult
+					   |recoverWith: $recoverWithTestResult
+					   |repeatedHardyUntilSome: $repeatedHardyUntilSomeTestResult
+					   |repeatedUntilSome: $repeatedUntilSomeTestResult
+					   |repeatedUntilDefined: $repeatedUntilDefinedTestResult
+					   |repeatedWhileNone: $repeatedWhileNoneTestResult
+					   |repeatedWhileUndefined: $repeatedWhileUndefinedTestResult
+				""".stripMargin
+				)
 			// TODO add a test to check if Task.andThen effect-full function is guarded.
 		}
 	}
