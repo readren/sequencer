@@ -46,8 +46,7 @@ object TaskDomain {
  * @define maxRecursionDepthPerExecutor Maximum recursion depth per executor. Once this limit is reached, the recursion continues in a new executor. The result does not depend on this parameter as long as no [[StackOverflowError]] occurs.
  * @define isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, this parameter should be set to `false`. This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously.
  */
-trait TaskDomain(assistant: TaskDomain.Assistant) {
-	thisTaskContext =>
+trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 
 
 	/**
@@ -92,8 +91,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 	 *
 	 * @tparam A the type of result obtained when executing this task.
 	 */
-	trait Task[+A] {
-		thisTask =>
+	trait Task[+A] { thisTask =>
 
 		/**
 		 * The implementation must trigger the execution of this [[Task]] and then ensure the callback function `onComplete` is called within the $DoSiThEx when the task's execution finishes, either normally or abnormally.
@@ -801,6 +799,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 					}
 				}
 			}
+
 			if isRunningInDoSiThEx then work()
 			else queueForSequentialExecution(() => work())
 		}
@@ -1165,8 +1164,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 	/** A commitment to complete a [[Task]].
 	 * Analogous to [[scala.concurrent.Promise]] but for a [[Task]] instead of a [[scala.concurrent.Future]].
 	 * */
-	final class Commitment[A] {
-		thisCommitment =>
+	final class Commitment[A] { thisCommitment =>
 		private var oResult: Option[Try[A]] = None;
 		private var onCompletedObservers: List[Try[A] => Unit] = Nil;
 
@@ -1224,5 +1222,40 @@ trait TaskDomain(assistant: TaskDomain.Assistant) {
 				otherTask.attempt()(result => complete(result)(onAlreadyCompleted));
 			this
 		}
+	}
+
+	//////////////////////////////////////
+
+	object Flow {
+		def lift[A, B](f: A => B): Flow[A, B] =
+			(a: A) => Task.successful(f(a))
+
+		def wrap[A, B](taskBuilder: A => Task[B]): Flow[A, B] =
+			(a: A) => taskBuilder(a)
+	}
+
+	trait Flow[A, B] { thisFlow =>
+
+		protected def attempt(a: A): Task[B]
+
+		def apply(a: A, isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
+			def work(): Unit = {
+				try attempt(a).attempt(true)(onComplete)
+				catch {
+					case NonFatal(e) => onComplete(Failure(e))
+				}
+			}
+
+			if isRunningInDoSiThEx then work()
+			else queueForSequentialExecution(() => work())
+		}
+
+		/** Connects this flow output with the input of the received one. */
+		def to[C](next: Flow[B, C]): Flow[A, C] =
+			(a: A) => thisFlow.attempt(a).flatMap(b => next.attempt(b))
+
+		/** Connects the received flow output with the input of this one. */
+		def from[Z](previous: Flow[Z, A]): Flow[Z, B] =
+			(z: Z) => previous.attempt(z).flatMap(a => thisFlow.attempt(a))
 	}
 }

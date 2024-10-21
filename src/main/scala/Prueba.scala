@@ -106,7 +106,7 @@ object Prueba {
 		}.narrow
 	}
 
-	def apply3(): Behavior[Pregunta] = {
+	def apply30(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
 			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
 				import taskContext.*
@@ -124,6 +124,26 @@ object Prueba {
 		}
 	}
 
+	def apply31(): Behavior[Pregunta] = {
+		Behaviors.setup { ctx =>
+			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
+				import taskContext.*
+
+				val flow = Flow.wrap[ActorRef[Respuesta], Unit] { replyTo1 =>
+					for {
+						case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.query[Pregunta](ref => Respuesta(ref, "Hola también"))
+						_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
+					} yield ()					
+				}
+				Behaviors.receiveMessage {
+					case Pregunta(replyTo1, "Hola") =>
+						flow.apply(replyTo1).attempt(true) { x => ctx.log.info(s"resultado final: $x") }
+						Behaviors.same
+				}
+			}
+		}
+	}
+	
 	def apply4(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
 			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
