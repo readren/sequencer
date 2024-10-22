@@ -17,19 +17,15 @@ class TaskDomainTestShared[TD <: TaskDomain](val taskDomain: TD, synchronousOnly
 		)
 
 		def toFutureBuilder(failureLabel: String): Gen[() => Future[A]] = {
-			val immediateGen: Gen[() => Future[A]] = genA.toTry(s"$failureLabel / FutureBuilder.immediate").map(Future.fromTry).map(future => () => future)
+			val immediateGen: Gen[() => Future[A]] = genA.toTry(s"$failureLabel / FutureBuilder.immediate").map(tryA => () => Future.fromTry(tryA))
 			val delayedGen: Gen[() => Future[A]] =
 				for {
 					tryA <- genA.toTry(s"$failureLabel / FutureBuilder.delayed")
 					delay <- Gen.oneOf(0, 1, 2, 4, 8, 16)
 				} yield {
 					() => {
-						val promise = Promise[A]()
-						Future {
-							Thread.sleep(delay)
-							promise.complete(tryA)
-						}(ExecutionContext.global)
-						promise.future
+						Future(Thread.sleep(delay))(ExecutionContext.global)
+							.transform(_ => tryA)(ExecutionContext.global)
 					}
 				}
 			Gen.oneOf(immediateGen, delayedGen)

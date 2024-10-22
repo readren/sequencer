@@ -88,37 +88,32 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: TaskDomain =
 	 * $workaroundAbstractMethodError
 	 */
 	class Timed[A](task: Task[A], timeout: FiniteDuration) extends Task[Option[A]] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[Option[A]] => Unit): Unit = {
-			def work(): Unit = {
-				var hasElapsed = false;
-				var hasCompleted = false;
-				val timerId = genTimerId();
-				task.attempt(isRunningInDoSiThEx = true) { tryA =>
-					if (!hasElapsed) {
-						cancelDelayedExecution(timerId);
-						hasCompleted = true;
-						onComplete(tryA map Some.apply)
-					}
+		override def engage(onComplete: Try[Option[A]] => Unit): Unit = {
+			var hasElapsed = false;
+			var hasCompleted = false;
+			val timerId = genTimerId();
+			task.attempt(true) { tryA =>
+				if (!hasElapsed) {
+					cancelDelayedExecution(timerId);
+					hasCompleted = true;
+					onComplete(tryA map Some.apply)
 				}
-				queueForSequentialExecutionDelayed(timerId, timeout) {
-					() =>
-						if (!hasCompleted) {
-							hasElapsed = true;
-							onComplete(Success(None))
-						}
-				};
 			}
-
-			if (isRunningInDoSiThEx) work();
-			else queueForSequentialExecution(() => work());
+			queueForSequentialExecutionDelayed(timerId, timeout) {
+				() =>
+					if (!hasCompleted) {
+						hasElapsed = true;
+						onComplete(Success(None))
+					}
+			};
 		}
 	}
 
 	class DelayedLoop[A](maxNumberOfExecutions: Int, delay: FiniteDuration)(task: Task[Option[Try[A]]]) extends Task[Option[A]] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[Option[A]] => Unit): Unit = {
+		override def engage(onComplete: Try[Option[A]] => Unit): Unit = {
 
 			def loop(remainingExecutions: Int): Unit = {
-				task.attempt(isRunningInDoSiThEx = true) {
+				task.attempt(true) {
 					case Success(Some(Success(a))) => onComplete(Success(Some(a)))
 					case Success(Some(Failure(e))) => onComplete(Failure(e))
 					case Success(None) =>
@@ -131,16 +126,11 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: TaskDomain =
 				}
 			}
 
-			def work(): Unit = {
-				if (maxNumberOfExecutions <= 0) {
-					onComplete(Success(None))
-				} else {
-					loop(maxNumberOfExecutions);
-				}
+			if (maxNumberOfExecutions <= 0) {
+				onComplete(Success(None))
+			} else {
+				loop(maxNumberOfExecutions);
 			}
-
-			if (isRunningInDoSiThEx) work();
-			else queueForSequentialExecution(() => work());
 		}
 	}
 }

@@ -137,7 +137,7 @@ object Prueba {
 				}
 				Behaviors.receiveMessage {
 					case Pregunta(replyTo1, "Hola") =>
-						flow.apply(replyTo1).attempt(true) { x => ctx.log.info(s"resultado final: $x") }
+						flow.apply(replyTo1, true) { x => ctx.log.info(s"resultado final: $x") }
 						Behaviors.same
 				}
 			}
@@ -155,7 +155,7 @@ object Prueba {
 							_ <- Task.mine(() => ctx.log.info("sigue funcionando"))
 							_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
 						} yield ()
-						task.attempt()(rf => ctx.log.info(s"resultado final: $rf"))
+						task.attempt(true)(rf => ctx.log.info(s"resultado final: $rf"))
 						Behaviors.same
 				}
 

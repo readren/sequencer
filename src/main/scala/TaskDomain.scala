@@ -27,6 +27,8 @@ object TaskDomain {
 		 * */
 		def reportFailure(cause: Throwable): Unit
 	}
+
+	class ExceptionReport(message: String, cause: Throwable) extends RuntimeException(message, cause)
 }
 
 /**
@@ -44,9 +46,9 @@ object TaskDomain {
  * @define unhandledErrorsAreReported The call to this function is guarded with a try-catch. If it throws a non-fatal exception it will be caught and reported with [[TaskDomain.Assistant.reportFailure()]].
  * @define isNotGuarded This function call is not guarded with try-catch. Only transformations that meant to be executed in the DoSiThEx are guarded.
  * @define maxRecursionDepthPerExecutor Maximum recursion depth per executor. Once this limit is reached, the recursion continues in a new executor. The result does not depend on this parameter as long as no [[StackOverflowError]] occurs.
- * @define isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, this parameter should be set to `false`. This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously.
+ * @define isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, the caller should set this parameter to `false` (or don't specify a value). This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously. This method is thread-safe when this parameter value is false.
  */
-trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
+trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 
 
 	/**
@@ -61,17 +63,19 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * ==Note:==
 	 * Is more efficient than the functionally equivalent: {{{ Task.mine(runnable.run).attemptAndForget(); }}}.
 	 */
-	inline def queueForSequentialExecution(runnable: Runnable): Unit = {
-		assistant.queueForSequentialExecution(runnable)
+	inline def queueForSequentialExecution(inline procedure: => Unit): Unit = {
+		${ TaskDomainMacros.queueForSequentialExecutionImpl('assistant, 'procedure) }
 	}
 
+	inline def reportFailure(cause: Throwable): Unit =
+		${ TaskDomainMacros.reportFailureImpl('assistant, 'cause) }
 
 	/**
 	 * An [[ExecutionContext]] that uses the $DoSiThEx. See [[TaskDomain.assistant.queueForSequentialExecution]] */
 	object ownSingleThreadExecutionContext extends ExecutionContext {
-		def execute(runnable: Runnable): Unit = assistant.queueForSequentialExecution(runnable)
+		def execute(runnable: Runnable): Unit = queueForSequentialExecution(runnable.run())
 
-		def reportFailure(cause: Throwable): Unit = assistant.reportFailure(cause)
+		def reportFailure(cause: Throwable): Unit = thisTaskDomain.reportFailure(cause)
 	}
 
 	/**
@@ -94,31 +98,40 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	trait Task[+A] { thisTask =>
 
 		/**
-		 * The implementation must trigger the execution of this [[Task]] and then ensure the callback function `onComplete` is called within the $DoSiThEx when the task's execution finishes, either normally or abnormally.
-		 * The implementation should be thread-safe.
-		 * This is the only primitive method of this trait. All the other derive from this one.
+		 * This method performs the actions represented by the task and calls `onComplete` within the $DoSiThEx context when the task finishes, regardless of whether it succeeds or fails.
 		 *
-		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
-		 * @param onComplete callback that the implementation must invoke when the execution of this task completes, successfully or not.
-		 * The implementation must ensure the call to this call-back occurs within the $DoSiThEx.
-		 * The implementation may assume that `onComplete` does not throw non-fatal exceptions: it must either terminate normally or fatally, but never with a non-fatal exception.
+		 * The implementation may assume this method is invoked within the $DoSiThEx.
+		 *
+		 * Any non-fatal exceptions thrown by this method must be caught, except those thrown by the  provided callback.
+		 * If a non-fatal exception originates from a routine passed in the class constructor, including those captured over a closure, it should either be propagated to the task's result or reported using [[assistant.reportFailure]] if propagation is not feasible. 
+		 *
+		 * It is critical to note that exceptions thrown by the callback should never be caught.
+		 *
+		 * This method is the sole primitive operation of this trait; all other methods are derived from it.
+		 *
+		 * @param onComplete The callback that must be invoked upon the completion of this task,
+		 * either successfully or unsuccessfully. The implementation should call this callback 
+		 * within the $DoSiThEx context.
+		 *
+		 * The implementation may assume that `onComplete` will either terminate normally or 
+		 * fatally, but will not throw non-fatal exceptions.
 		 */
-		def attempt(isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit;
+		protected def engage(onComplete: Try[A] => Unit): Unit;
 
 		/**
+		 * Trigger the execution of this [[Task]].
 		 *
-		 * @param onComplete called when the execution of this task completes, successfully or not. $unhandledErrorsAreReported $isExecutedByDoSiThEx
+		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
+		 * @param onComplete called when the execution of this task completes, successfully or not.
+		 * Must not throw non-fatal exceptions: `onComplet` must either terminate normally or fatally, but never with a non-fatal exception.                  
+		 * $isExecutedByDoSiThEx
 		 */
-		def engage(onComplete: Try[A] => Unit): Unit =
-			attempt() { tryA =>
-				try onComplete(tryA) catch {
-					case NonFatal(cause) => assistant.reportFailure(cause)
-				}
-			}
+		inline def attempt(inline isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit = {
+			if isRunningInDoSiThEx then engage(onComplete)
+			else queueForSequentialExecution(engage(onComplete))
+		}
 
 		/** Triggers the execution of this [[Task]] and returns a [[Future]] of its result.
-		 *
-		 * $threadSafe
 		 *
 		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
 		 * @return a [[Future]] that will be completed when this [[Task]] is completed.
@@ -135,8 +148,6 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 * Is equivalent to {{{ transform(Success.apply).toFuture(isRunningInDoSiThEx) }}}
 		 *
 		 * Useful when failures need to be propagated to the next for-expression (or for-binding).
-		 *
-		 * $threadSafe
 		 *
 		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
 		 * @return a [[Future]] that will be completed when this [[Task]] is completed.
@@ -159,22 +170,43 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 
 		/** Triggers the execution of this [[Task]] noticing faulty results.
 		 *
-		 * $threadSafe
-		 *
 		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
 		 * @param errorHandler called when the execution of this task completes with a failure. $isExecutedByDoSiThEx $unhandledErrorsAreReported
 		 */
-		inline def attemptAndForgetHandlingErrors(isRunningInDoSiThEx: Boolean = false)(errorHandler: Throwable => Unit): Unit =
+		def attemptAndForgetHandlingErrors(isRunningInDoSiThEx: Boolean = false)(errorHandler: Throwable => Unit): Unit =
 			attempt(isRunningInDoSiThEx) {
 				case Failure(e) =>
 					try errorHandler(e) catch {
-						case NonFatal(cause) => assistant.reportFailure(cause)
+						case NonFatal(cause) => reportFailure(cause)
 					}
 				case _ => ()
 			}
 
-		inline def foreach(consumer: Try[A] => Unit): Task[Unit] =
-			new Foreach[A](thisTask, consumer)
+		/**
+		 * Processes the result of the task once it is completed, for its side effects.
+		 * ===Detailed behavior===
+		 * A [[Task]] that, when executed, it will:
+		 *		- trigger the execution of `taskA` and if the result is:
+		 *			- a [[Failure]], completes with that failure without calling `consumer`.	
+		 *			- `Success(a)`, tries to apply the `consumer` to `a`. If the evaluation finishes:
+		 *				- abruptly, completes with a [[Failure]] containing the cause.
+		 *				- normally, completes with `Success(())`.
+		 *
+		 * @param consumer called with this task result when it completes, if it ever does.
+		 */
+		inline def consume(consumer: Try[A] => Unit): Task[Unit] =
+			new Consume[A](thisTask, consumer)
+
+		/**
+		 * Processes the result of the task once it is completed successfully, for its side effects.
+		 * WARNING: `consumer` will not be called if this task is never completed or if it is completed with a failure.
+		 * @param consumer called with this task result when it completes, if it ever does.
+		 *  */
+		def foreach(consumer: A => Unit): Task[Unit] =
+			consume {
+				case Success(a) => consumer(a)
+				case _ => ()
+			}
 
 		/**
 		 * Transform this task by applying the given function to the result. Analogous to [[Future.transform]]
@@ -240,8 +272,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 * @param taskBBuilder a function that receives the result of `taskA`, when it is a [[Success]], and returns the task to be executed next. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 		 */
 		def flatMap[B](taskBBuilder: A => Task[B]): Task[B] = transformWith {
-			case Success(s) => taskBBuilder(s);
-			case Failure(e) => new Immediate(Failure(e)); //this.asInstanceOf[Task[B]]
+			case Success(a) => taskBBuilder(a);
+			case Failure(e) => Task.failed(e);
 		}
 
 		/** Needed to support filtering and case matching in for-compressions. The for-expressions (or for-bindings) after the filter are not executed if the [[predicate]] is not satisfied.
@@ -272,16 +304,15 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 *
 		 * $threadSafe
 		 *
-		 * @param se a side-effecting function. The call to this function is wrapped in a try-catch block; however, unlike most other operators, unhandled non-fatal exceptions are not propagated to the result of the returned task. $isExecutedByDoSiThEx
+		 * @param sideEffect a side-effecting function. The call to this function is wrapped in a try-catch block; however, unlike most other operators, unhandled non-fatal exceptions are not propagated to the result of the returned task. $isExecutedByDoSiThEx
 		 */
-		def andThen(se: Try[A] => Any): Task[A] = {
-			transform {
-				ta =>
-					try se(ta)
-					catch {
-						case NonFatal(e) => assistant.reportFailure(e)
-					}
-					ta
+		def andThen(sideEffect: Try[A] => Any): Task[A] = {
+			transform { tryA =>
+				try sideEffect(tryA)
+				catch {
+					case NonFatal(e) => reportFailure(e)
+				}
+				tryA
 			}
 		}
 
@@ -426,7 +457,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 		 * Usar el type-path checking para detectar en tiempo de compilación cuando una [[Task]] está siendo usada fuera del actor ejecutor es muy valioso, pero tiene un costo: El chequeo de type-path es más estricto de lo necesario para este propósito y, por ende, el compilador reportará errores de tipo en situaciones donde se sabe que el actor ejecutor es el correcto. Esta operación ([[castTypePath()]]) está para tratar esos casos.
 		 */
 		def castTypePath[E <: TaskDomain](taskDomain: E): taskDomain.Task[A] = {
-			assert(thisTaskContext eq taskDomain);
+			assert(thisTaskDomain eq taskDomain);
 			this.asInstanceOf[taskDomain.Task[A]]
 		}
 	}
@@ -706,7 +737,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * $onCompleteExecutedByDoSiThEx
 	 * */
 	final class Never extends Task[Nothing] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[Nothing] => Unit): Unit = ()
+		override def engage(onComplete: Try[Nothing] => Unit): Unit = ()
 	}
 
 	/** A [[Task]] whose result is calculated at the call site even before the task is constructed. The result of its execution is always the provided value.
@@ -718,11 +749,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * $onCompleteExecutedByDoSiThEx
 	 */
 	final class Immediate[+A](tryA: Try[A]) extends Task[A] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit =
-			if (isRunningInDoSiThEx)
-				onComplete(tryA)
-			else
-				assistant.queueForSequentialExecution(() => onComplete(tryA))
+		override def engage(onComplete: Try[A] => Unit): Unit =
+			onComplete(tryA)
 
 		override def toFuture(isRunningInDoSiThEx: Boolean): Future[A] =
 			Future.fromTry(tryA)
@@ -742,18 +770,13 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * @param resultSupplier builds the result of this [[Task]]. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 */
 	final class Own[+A](resultSupplier: () => Try[A]) extends Task[A] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit = {
-			def tryResultBuilder() =
+		override def engage(onComplete: Try[A] => Unit): Unit = {
+			val result =
 				try resultSupplier()
 				catch {
 					case NonFatal(e) => Failure(e)
 				}
-
-			if (isRunningInDoSiThEx) {
-				onComplete(tryResultBuilder())
-			} else {
-				assistant.queueForSequentialExecution(() => onComplete(tryResultBuilder()))
-			}
+			onComplete(result)
 		}
 	}
 
@@ -764,7 +787,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * @param resultFuture the future to wait for.
 	 */
 	final class Wait[+A](resultFuture: Future[A]) extends Task[A] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit =
+		override def engage(onComplete: Try[A] => Unit): Unit =
 			resultFuture.onComplete(onComplete)(ownSingleThreadExecutionContext)
 	}
 
@@ -773,11 +796,17 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
-	 * @param futureBuilder a function that starts the process and return a [[Future]] of its result. $isNotGuarded
+	 * @param futureBuilder a function that starts the process and return a [[Future]] of its result. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 * */
 	final class Alien[+A](futureBuilder: () => Future[A]) extends Task[A] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit =
-			futureBuilder().onComplete(onComplete)(ownSingleThreadExecutionContext)
+		override def engage(onComplete: Try[A] => Unit): Unit = {
+			val future =
+				try futureBuilder()
+				catch {
+					case NonFatal(e) => Future.failed(e)
+				}
+			future.onComplete(onComplete)(ownSingleThreadExecutionContext)
+		}
 	}
 
 
@@ -789,19 +818,16 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *			- abruptly, completes with a [[Failure]] containing the cause.
 	 *			- normally, completes with `Success(())`.
 	 */
-	final class Foreach[A](taskA: Task[A], consumer: Try[A] => Unit) extends Task[Unit] {
-		def attempt(isRunningInDoSiThEx: Boolean = false)(onComplete: Try[Unit] => Unit): Unit = {
-			def work(): Unit = {
-				taskA.attempt(true) { tryA =>
-					try onComplete(Success(consumer(tryA)))
+	final class Consume[A](taskA: Task[A], consumer: Try[A] => Unit) extends Task[Unit] {
+		override def engage(onComplete: Try[Unit] => Unit): Unit = {
+			taskA.attempt(true) { tryA =>
+				val tryConsumerResult =
+					try Success(consumer(tryA))
 					catch {
-						case NonFatal(cause) => onComplete(Failure(cause))
+						case NonFatal(cause) => Failure(cause)
 					}
-				}
+				onComplete(tryConsumerResult)
 			}
-
-			if isRunningInDoSiThEx then work()
-			else queueForSequentialExecution(() => work())
 		}
 	}
 
@@ -821,26 +847,22 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 *
 	 * */
 	final class WithFilter[A](taskA: Task[A], predicate: A => Boolean) extends Task[A] {
-		def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit = {
-			def work(): Unit = {
-				taskA.attempt(true) {
-					case s@Success(a) =>
+		override def engage(onComplete: Try[A] => Unit): Unit = {
+			taskA.attempt(true) {
+				case sa@Success(a) =>
+					val predicateResult =
 						try {
-							if (predicate(a))
-								onComplete(s)
-							else
-								onComplete(Failure(new NoSuchElementException(s"Task filter predicate is not satisfied for $a")))
+							if predicate(a) then sa
+							else Failure(new NoSuchElementException(s"Task filter predicate is not satisfied for $a"))
 						} catch {
-							case NonFatal(e) => onComplete(Failure(e))
+							case NonFatal(cause) =>
+								Failure(cause)
 						}
+					onComplete(predicateResult)
 
-					case f@Failure(_) =>
-						onComplete(f)
-				}
+				case f@Failure(_) =>
+					onComplete(f)
 			}
-
-			if (isRunningInDoSiThEx) work();
-			else assistant.queueForSequentialExecution(() => work())
 		}
 	}
 
@@ -861,12 +883,15 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * $unhandledErrorsArePropagatedToTaskResult
 	 */
 	final class Transform[+A, +B](originalTask: Task[A], resultTransformer: Try[A] => Try[B]) extends Task[B] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
-			originalTask.attempt(isRunningInDoSiThEx)(ta => onComplete {
-				try resultTransformer(ta) catch {
-					case NonFatal(e) => Failure(e);
-				}
-			});
+		override def engage(onComplete: Try[B] => Unit): Unit = {
+			originalTask.attempt(true) { tryA =>
+				val tryB =
+					try resultTransformer(tryA)
+					catch {
+						case NonFatal(e) => Failure(e);
+					}
+				onComplete(tryB)
+			};
 		}
 	}
 
@@ -884,14 +909,16 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * @param taskBBuilder a function that receives the result of the execution of `taskA` and builds the task to be executed next. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 */
 	final class Compose[+A, +B](taskA: Task[A], taskBBuilder: Try[A] => Task[B]) extends Task[B] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit =
-			taskA.attempt(isRunningInDoSiThEx) { resultA =>
-				try
-					taskBBuilder(resultA).attempt(true)(onComplete);
-				catch {
-					case NonFatal(e) => onComplete(Failure(e))
-				}
+		override def engage(onComplete: Try[B] => Unit): Unit = {
+			taskA.attempt(true) { tryA =>
+				val taskB =
+					try taskBBuilder(tryA)
+					catch {
+						case NonFatal(e) => Task.failed(e)
+					}
+				taskB.attempt(true)(onComplete)
 			}
+		}
 	}
 
 
@@ -905,31 +932,32 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * $onCompleteExecutedByDoSiThEx
 	 */
 	final class Combine[+A, +B, +C](taskA: Task[A], taskB: Task[B], f: (Try[A], Try[B]) => Try[C]) extends Task[C] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[C] => Unit): Unit = {
+		override def engage(onComplete: Try[C] => Unit): Unit = {
 			var ota: Option[Try[A]] = None;
 			var otb: Option[Try[B]] = None;
-			taskA.attempt(isRunningInDoSiThEx) { ta =>
+			taskA.attempt(true) { tryA =>
 				otb match {
-					case None => ota = Some(ta)
-					case Some(tb) => onComplete {
-						try {
-							f(ta, tb)
-						} catch {
-							case NonFatal(e) => Failure(e)
-						}
-					}
+					case None => ota = Some(tryA)
+					case Some(tryB) =>
+						val tryC =
+							try f(tryA, tryB)
+							catch {
+								case NonFatal(e) => Failure(e)
+							}
+						onComplete(tryC)
+
 				}
 			}
-			taskB.attempt(isRunningInDoSiThEx) { tb =>
+			taskB.attempt(true) { tb =>
 				ota match {
 					case None => otb = Some(tb)
-					case Some(ta) => onComplete {
-						try {
-							f(ta, tb)
-						} catch {
-							case NonFatal(e) => Failure(e)
-						}
-					}
+					case Some(ta) =>
+						val tryC =
+							try f(ta, tb)
+							catch {
+								case NonFatal(e) => Failure(e)
+							}
+						onComplete(tryC)
 				}
 			}
 		}
@@ -959,33 +987,32 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * */
 	final class RepeatHardyUntilSome[+A, +B](taskA: Task[A], maxRecursionDepthPerExecutor: Int = 9)(condition: (Int, Try[A]) => Option[Try[B]]) extends Task[B] {
 
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
+		override def engage(onComplete: Try[B] => Unit): Unit = {
 			/**
 			 * @param completedCycles number of already completed cycles.
 			 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case more synchronous scenario. */
 			def loop(completedCycles: Int, recursionDepth: Int): Unit = {
-				taskA.attempt(isRunningInDoSiThEx = true) { tryA =>
-					try {
-						condition(completedCycles, tryA) match {
-							case Some(tryB) =>
-								onComplete(tryB);
-
-							case None =>
-								if (recursionDepth < maxRecursionDepthPerExecutor) {
-									loop(completedCycles + 1, recursionDepth + 1)
-								} else {
-									queueForSequentialExecution(() => loop(completedCycles + 1, 0))
-								}
+				taskA.attempt(true) { tryA =>
+					val conditionResult =
+						try condition(completedCycles, tryA)
+						catch {
+							case NonFatal(cause) => Some(Failure(cause))
 						}
-					} catch {
-						case NonFatal(cause) =>
-							onComplete(Failure(cause))
+					conditionResult match {
+						case Some(tryB) =>
+							onComplete(tryB);
+
+						case None =>
+							if (recursionDepth < maxRecursionDepthPerExecutor) {
+								loop(completedCycles + 1, recursionDepth + 1)
+							} else {
+								queueForSequentialExecution(loop(completedCycles + 1, 0))
+							}
 					}
 				}
 			}
 
-			if (isRunningInDoSiThEx) loop(0, 0);
-			else queueForSequentialExecution(() => loop(0, 0));
+			loop(0, 0)
 		}
 	}
 
@@ -1009,253 +1036,250 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskContext =>
 	 * @tparam B the type of the result of this task.
 	 */
 	final class RepeatHardyWhileNone[+A, +B](taskA: Task[A], ta0: Try[A], maxRecursionDepthPerExecutor: Int = 9)(condition: (Int, Try[A]) => Option[B]) extends Task[B] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
+		override def engage(onComplete: Try[B] => Unit): Unit = {
 			/**
 			 * @param completedCycles number of already completed cycles.
 			 * @param lastTaskResult the result of the last task execution.
 			 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case more synchronous scenario. */
 			def loop(completedCycles: Int, lastTaskResult: Try[A], recursionDepth: Int): Unit = {
-				try {
-					condition(completedCycles, lastTaskResult) match {
-						case Some(b) => onComplete(Success(b))
-						case None => taskA.attempt(true) { newTryA =>
-							if recursionDepth < maxRecursionDepthPerExecutor then loop(completedCycles + 1, newTryA, recursionDepth + 1)
-							else queueForSequentialExecution(() => loop(completedCycles + 1, newTryA, 0))
-						}
+				val conditionResult: Try[B] | None.type =
+					try condition(completedCycles, lastTaskResult) match {
+						case Some(b) => Success(b)
+						case None => None
+					} catch {
+						case NonFatal(cause) => Failure(cause)
 					}
-				} catch {
-					case NonFatal(cause) => onComplete(Failure(cause))
-				}
+				if conditionResult eq None then {
+					taskA.attempt(true) { newTryA =>
+						if recursionDepth < maxRecursionDepthPerExecutor then loop(completedCycles + 1, newTryA, recursionDepth + 1)
+						else queueForSequentialExecution(loop(completedCycles + 1, newTryA, 0))
+					}
+				} else onComplete(conditionResult.asInstanceOf[Try[B]])
+
 			}
 
-			if (isRunningInDoSiThEx) loop(0, ta0, 0);
-			else queueForSequentialExecution(() => loop(0, ta0, 0));
+			loop(0, ta0, 0)
 		}
 	}
 
-
-	/** Task that, when executed, repeatedly constructs and executes tasks as long as the `condition` is met.
-	 * ===Detailed behavior:===
-	 * When this [[Task]] is executed, it will:
-	 *  - Try to apply the function `checkAndBuild` to `(n, tryA0)` where `n` is the number of already completed cycles, and if it completes:
-	 *  	- Abruptly, completes with the cause.
-	 *		- Normally, returning a `Left(tryB)`, completes with `tryB`.
-	 *  		- Normally, returning a `Right(taskA)`, executes the `taskA` and goes back to the first step replacing `tryA0` with the result.
-	 *
-	 * @param tryA0 the initial value wrapped in a `Try`, used in the first call to `checkAndBuild`.
-	 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
-	 * @param checkAndBuild a function that takes the number of already completed cycles and the last task result wrapped in a `Try`, returning an `Either[Try[B], Task[A]]` indicating the next action to perform.	$isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult *
-	 */
-	final class WhileRightRepeatHardy[+A, +B](tryA0: Try[A], maxRecursionDepthPerExecutor: Int = 9)(checkAndBuild: (Int, Try[A]) => Either[Try[B], Task[A]]) extends Task[B] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
-			/**
-			 * @param completedCycles number of already completed cycles, which consist of a task creation and its execution.
-			 * @param lastTaskResult the result of the last task execution.
-			 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case scenario where all calls are synchronous. */
-			def loop(completedCycles: Int, lastTaskResult: Try[A], recursionDepth: Int): Unit = {
-				try {
-					checkAndBuild(completedCycles, lastTaskResult) match {
+		/** Task that, when executed, repeatedly constructs and executes tasks as long as the `condition` is met.
+		 * ===Detailed behavior:===
+		 * When this [[Task]] is executed, it will:
+		 *  - Try to apply the function `checkAndBuild` to `(n, tryA0)` where `n` is the number of already completed cycles, and if it completes:
+		 *  	- Abruptly, completes with the cause.
+		 *		- Normally, returning a `Left(tryB)`, completes with `tryB`.
+		 *  	- Normally, returning a `Right(taskA)`, executes the `taskA` and goes back to the first step replacing `tryA0` with the result.
+		 *
+		 * @param tryA0 the initial value wrapped in a `Try`, used in the first call to `checkAndBuild`.
+		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
+		 * @param checkAndBuild a function that takes the number of already completed cycles and the last task result wrapped in a `Try`, returning an `Either[Try[B], Task[A]]` indicating the next action to perform.	$isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult *
+		 */
+		final class WhileRightRepeatHardy[+A, +B](tryA0: Try[A], maxRecursionDepthPerExecutor: Int = 9)(checkAndBuild: (Int, Try[A]) => Either[Try[B], Task[A]]) extends Task[B] {
+			override def engage(onComplete: Try[B] => Unit): Unit = {
+				/**
+				 * @param completedCycles number of already completed cycles, which consist of a task creation and its execution.
+				 * @param lastTaskResult the result of the last task execution.
+				 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case scenario where all calls are synchronous. */
+				def loop(completedCycles: Int, lastTaskResult: Try[A], recursionDepth: Int): Unit = {
+					val tryBOrTaskA =
+						try checkAndBuild(completedCycles, lastTaskResult)
+						catch {
+							case NonFatal(cause) => Left(Failure(cause));
+						}
+					tryBOrTaskA match {
 						case Left(tryB) =>
 							onComplete(tryB);
 						case Right(taskA) =>
-							taskA.attempt(isRunningInDoSiThEx = true) { newTryA =>
+							taskA.attempt(true) { newTryA =>
 								if (recursionDepth < maxRecursionDepthPerExecutor) loop(completedCycles + 1, newTryA, recursionDepth + 1)
-								else queueForSequentialExecution(() => loop(completedCycles + 1, newTryA, 0));
+								else queueForSequentialExecution(loop(completedCycles + 1, newTryA, 0));
 							}
 					}
-				} catch {
-					case NonFatal(cause) => onComplete(Failure(cause));
 				}
+
+				loop(0, tryA0, 0)
 			}
-
-			if (isRunningInDoSiThEx) loop(0, tryA0, 0);
-			else queueForSequentialExecution(() => loop(0, tryA0, 0));
 		}
-	}
 
-	/** Task that, when executed, repeatedly constructs and executes tasks until the result is [[Left]] or failed.
-	 * ===Detailed behavior:===
-	 * When this [[Task]] is executed, it will:
-	 *  - Try to apply the function `buildAndCheck` to `(n, a0)` where n is the number of already completed cycles. If the evaluation completes:
-	 *  	- Abruptly, completes with the cause.
-	 *  		- Normally, returning a `task`, executes the `task` and if its result is:
-	 *  			- `Failure(cause)`, completes with that `Failure(cause)`.
-	 *  			- `Success(Left(tryB))`, completes with `tryB`.
-	 *  			- `Success(Right(a1))`, goes back to the first step replacing `a0` with `a1`.
-	 *
-	 * $onCompleteExecutedByDoSiThEx
-	 *
-	 * @param a0 the initial value used in the first call to `buildAndCheck`.
-	 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
-	 * @param buildAndCheck a function that takes the number of already completed cycles and the last task result, returning a new task that yields an `Either[Try[B], A]` indicating the next action to perform. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
-	 */
-	final class RepeatUntilLeft[+A, +B](a0: A, maxRecursionDepthPerExecutor: Int = 9)(buildAndCheck: (Int, A) => Task[Either[Try[B], A]]) extends Task[B] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
-			/**
-			 * @param executionsCounter number of already completed cycles, which consist of a task creation and its execution.
-			 * @param lastTaskResult the result of the last task execution.
-			 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case scenario where all calls are synchronous. */
-			def loop(executionsCounter: Int, lastTaskResult: A, recursionDepth: Int): Unit = {
-				try {
-					buildAndCheck(executionsCounter, lastTaskResult).attempt(true) {
+		/** Task that, when executed, repeatedly constructs and executes tasks until the result is [[Left]] or failed.
+		 * ===Detailed behavior:===
+		 * When this [[Task]] is executed, it will:
+		 *  - Try to apply the function `buildAndCheck` to `(n, a0)` where n is the number of already completed cycles. If the evaluation completes:
+		 *  	- Abruptly, completes with the cause.
+		 *  		- Normally, returning a `task`, executes the `task` and if its result is:
+		 *  			- `Failure(cause)`, completes with that `Failure(cause)`.
+		 *  			- `Success(Left(tryB))`, completes with `tryB`.
+		 *  			- `Success(Right(a1))`, goes back to the first step replacing `a0` with `a1`.
+		 *
+		 * $onCompleteExecutedByDoSiThEx
+		 *
+		 * @param a0 the initial value used in the first call to `buildAndCheck`.
+		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
+		 * @param buildAndCheck a function that takes the number of already completed cycles and the last task result, returning a new task that yields an `Either[Try[B], A]` indicating the next action to perform. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+		 */
+		final class RepeatUntilLeft[+A, +B](a0: A, maxRecursionDepthPerExecutor: Int = 9)(buildAndCheck: (Int, A) => Task[Either[Try[B], A]]) extends Task[B] {
+			override def engage(onComplete: Try[B] => Unit): Unit = {
+				/**
+				 * @param executionsCounter number of already completed cycles, which consist of a task creation and its execution.
+				 * @param lastTaskResult the result of the last task execution.
+				 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case scenario where all calls are synchronous. */
+				def loop(executionsCounter: Int, lastTaskResult: A, recursionDepth: Int): Unit = {
+					val task: Task[Either[Try[B], A]] =
+						try buildAndCheck(executionsCounter, lastTaskResult)
+						catch {
+							case NonFatal(e) => Task.successful(Left(Failure(e)))
+						}
+					task.attempt(true) {
 						case Success(Right(a)) =>
 							if (recursionDepth < maxRecursionDepthPerExecutor) loop(executionsCounter + 1, a, recursionDepth + 1)
-							else queueForSequentialExecution(() => loop(executionsCounter + 1, a, 0));
-						case Success(Left(tb)) =>
-							onComplete(tb)
+							else queueForSequentialExecution(loop(executionsCounter + 1, a, 0));
+						case Success(Left(tryB)) =>
+							onComplete(tryB)
 						case Failure(e) =>
 							onComplete(Failure(e))
 					}
-				} catch {
-					case NonFatal(cause) => onComplete(Failure(cause));
 				}
+
+				loop(0, a0, 0)
 			}
-
-			if (isRunningInDoSiThEx) loop(0, a0, 0);
-			else queueForSequentialExecution(() => loop(0, a0, 0));
 		}
-	}
 
-	/** Task that, when executed, repeatedly constructs and executes tasks until it succeed or the `maxRetries` is reached.
-	 * ===Detailed behavior:===
-	 * When it is executed, it will:
-	 *  - Try to apply the function `taskBuilder` to the number of tries that were already done. If the evaluation completes:
-	 *  	- Abruptly, completes with the cause.
-	 *  		- Normally, executes the returned task and if the result is:
-	 *  			- `Failure(cause)`, completes with `Failure(cause)`.
-	 *  			- `Success(Right(b))`, completes with `Success(b)`.
-	 *  			- `Success(Left(a))`, compares the retries counter against `maxRetries` and if:
-	 *  				- `retriesCounter >= maxRetries`, completes with `Left(a)`
-	 *  				- `retriesCounter < maxRetries`, increments the `retriesCounter` (which starts at zero) and goes back to the first step.
-	 */
-	final class RetryUntilRight[+A, +B](maxRetries: Int, maxRecursionDepthPerExecutor: Int = 9)(taskBuilder: Int => Task[Either[A, B]]) extends Task[Either[A, B]] {
-		override def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[Either[A, B]] => Unit): Unit = {
-			/**
-			 * @param attemptsAlreadyMade the number attempts already made.
-			 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case scenario where all calls are synchronous. */
-			def loop(attemptsAlreadyMade: Int, recursionDepth: Int): Unit = {
-				try {
-					taskBuilder(attemptsAlreadyMade).attempt(true) {
-						case Success(Right(b)) =>
-							onComplete(Success(Right(b)));
-
-						case Success(Left(a)) =>
-							if (attemptsAlreadyMade >= maxRetries) {
-								onComplete(Success(Left(a)));
-							} else if (recursionDepth < maxRecursionDepthPerExecutor) {
-								loop(attemptsAlreadyMade + 1, recursionDepth + 1);
-							} else {
-								queueForSequentialExecution(() => loop(attemptsAlreadyMade + 1, 0))
+		/** Task that, when executed, repeatedly constructs and executes tasks until the result is [[Right]] or the `maxRetries` is reached.
+		 * ===Detailed behavior:===
+		 * When it is executed, it will:
+		 *  - Try to apply the function `taskBuilder` to the number of tries that were already done. If the evaluation completes:
+		 *  	- Abruptly, completes with the cause.
+		 *  		- Normally, executes the returned task and if the result is:
+		 *  			- `Failure(cause)`, completes with `Failure(cause)`.
+		 *  			- `Success(Right(b))`, completes with `Success(b)`.
+		 *  			- `Success(Left(a))`, compares the retries counter against `maxRetries` and if:
+		 *  				- `retriesCounter >= maxRetries`, completes with `Left(a)`
+		 *  				- `retriesCounter < maxRetries`, increments the `retriesCounter` (which starts at zero) and goes back to the first step.
+		 */
+		final class RetryUntilRight[+A, +B](maxRetries: Int, maxRecursionDepthPerExecutor: Int = 9)(taskBuilder: Int => Task[Either[A, B]]) extends Task[Either[A, B]] {
+			override def engage(onComplete: Try[Either[A, B]] => Unit): Unit = {
+				/**
+				 * @param attemptsAlreadyMade the number attempts already made.
+				 * @param recursionDepth the number of recursions that may have been performed in the current executor in the worst case scenario where all calls are synchronous. */
+				def loop(attemptsAlreadyMade: Int, recursionDepth: Int): Unit = {
+					val task: Task[Either[A, B]] =
+						try taskBuilder(attemptsAlreadyMade)
+						catch {
+							case NonFatal(cause) => Task.failed(cause)
+						}
+					task.attempt(true) {
+						case success@Success(aOrB) =>
+							aOrB match {
+								case _: Right[A, B] =>
+									onComplete(success)
+								case Left(a) =>
+									if (attemptsAlreadyMade >= maxRetries) {
+										onComplete(success);
+									} else if (recursionDepth < maxRecursionDepthPerExecutor) {
+										loop(attemptsAlreadyMade + 1, recursionDepth + 1);
+									} else {
+										queueForSequentialExecution(loop(attemptsAlreadyMade + 1, 0))
+									}
 							}
-
-						case Failure(cause) =>
-							onComplete(Failure(cause));
+						case failure: Failure[Either[A, B]] =>
+								onComplete(failure);
 					}
-				} catch {
-					case NonFatal(cause) => onComplete(Failure(cause))
 				}
+
+				loop(0, 0)
 			}
-
-			if (isRunningInDoSiThEx) loop(0, 0);
-			else queueForSequentialExecution(() => loop(0, 0));
 		}
-	}
 
-	/** A commitment to complete a [[Task]].
-	 * Analogous to [[scala.concurrent.Promise]] but for a [[Task]] instead of a [[scala.concurrent.Future]].
-	 * */
-	final class Commitment[A] { thisCommitment =>
-		private var oResult: Option[Try[A]] = None;
-		private var onCompletedObservers: List[Try[A] => Unit] = Nil;
+		/** A commitment to complete a [[Task]].
+		 * Analogous to [[scala.concurrent.Promise]] but for a [[Task]] instead of a [[scala.concurrent.Future]].
+		 * */
+		final class Commitment[A] { thisCommitment =>
+			private var oResult: Option[Try[A]] = None;
+			private var onCompletedObservers: List[Try[A] => Unit] = Nil;
 
-		/** @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
-		def isCompleted: Boolean = this.oResult.isDefined;
+			/** @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
+			def isCompleted: Boolean = this.oResult.isDefined;
 
-		/** @return true if this [[Commitment]] is still pending; or false if it was completed. */
-		def isPending: Boolean = this.oResult.isEmpty;
+			/** @return true if this [[Commitment]] is still pending; or false if it was completed. */
+			def isPending: Boolean = this.oResult.isEmpty;
 
-		/** The [[Task]] this [[Commitment]] promises to complete. This task's will complete when this [[Commitment]] is fulfilled or broken. That could be done immediately calling [[fulfill]], [[break]], [[complete]], or in a deferred manner by calling [[completeWith]]. */
-		val task: Task[A] = new Task[A] {
-			def attempt(isRunningInDoSiThEx: Boolean)(onComplete: Try[A] => Unit): Unit = {
-				def work(): Unit = thisCommitment.oResult match {
+			/** The [[Task]] this [[Commitment]] promises to complete. This task's will complete when this [[Commitment]] is fulfilled or broken. That could be done immediately calling [[fulfill]], [[break]], [[complete]], or in a deferred manner by calling [[completeWith]]. */
+			val task: Task[A] = (onComplete: Try[A] => Unit) => {
+				thisCommitment.oResult match {
 					case Some(result) =>
 						onComplete(result);
 					case None =>
 						thisCommitment.onCompletedObservers = onComplete :: thisCommitment.onCompletedObservers;
 				}
+			}
 
-				if (isRunningInDoSiThEx) work();
-				else queueForSequentialExecution(() => work());
+			/** Provokes that the [[task]] that this [[Commitment]] promises to complete to be completed with the received `result`.
+			 *
+			 * @param result the result that the [[task]] this [[Commitment]] promised to complete . */
+			def complete(result: Try[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
+				queueForSequentialExecution {
+					oResult match {
+						case None =>
+							this.oResult = Some(result);
+							this.onCompletedObservers.foreach(_(result));
+							// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
+							this.onCompletedObservers = Nil
+						case Some(value) =>
+							try onAlreadyCompleted(value)
+							catch {
+								case NonFatal(cause) => reportFailure(cause)
+							}
+					}
+				};
+				this;
+			}
+
+			/** Provokes that the [[task]] this [[Commitment]] promises to complete to be fulfilled (completed successfully) with the received `result`. */
+			def fulfill(result: A)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Success(result))(onAlreadyCompleted);
+
+			/** Provokes that the [[task]] this [[Commitment]] promises to complete to be broken (completed with failure) with the received `cause`. */
+			def break(cause: Throwable)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Failure(cause))(onAlreadyCompleted);
+
+			/** Programs the completion of the [[task]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
+			def completeWith(otherTask: Task[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
+				if (otherTask ne this.task)
+					otherTask.attempt()(result => complete(result)(onAlreadyCompleted));
+				this
 			}
 		}
 
-		/** Provokes that the [[task]] that this [[Commitment]] promises to complete to be completed with the received `result`.
-		 *
-		 * @param result the result that the [[task]] this [[Commitment]] promised to complete . */
-		def complete(result: Try[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
-			queueForSequentialExecution { () =>
-				oResult match {
-					case None =>
-						this.oResult = Some(result);
-						this.onCompletedObservers.foreach(_(result));
-						// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
-						this.onCompletedObservers = Nil
-					case Some(value) =>
-						try onAlreadyCompleted(value)
-						catch {
-							case NonFatal(cause) => assistant.reportFailure(cause)
-						}
-				}
-			};
-			this;
+		//////////////////////////////////////
+
+		object Flow {
+			def lift[A, B](f: A => B): Flow[A, B] =
+				(a: A) => Task.successful(f(a))
+
+			def wrap[A, B](taskBuilder: A => Task[B]): Flow[A, B] =
+				(a: A) => taskBuilder(a)
 		}
 
-		/** Provokes that the [[task]] this [[Commitment]] promises to complete to be fulfilled (completed successfully) with the received `result`. */
-		def fulfill(result: A)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Success(result))(onAlreadyCompleted);
+		trait Flow[A, B] { thisFlow =>
 
-		/** Provokes that the [[task]] this [[Commitment]] promises to complete to be broken (completed with failure) with the received `cause`. */
-		def break(cause: Throwable)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Failure(cause))(onAlreadyCompleted);
+			protected def attempt(a: A): Task[B]
 
-		/** Programs the completion of the [[task]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
-		def completeWith(otherTask: Task[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
-			if (otherTask ne this.task)
-				otherTask.attempt()(result => complete(result)(onAlreadyCompleted));
-			this
-		}
-	}
-
-	//////////////////////////////////////
-
-	object Flow {
-		def lift[A, B](f: A => B): Flow[A, B] =
-			(a: A) => Task.successful(f(a))
-
-		def wrap[A, B](taskBuilder: A => Task[B]): Flow[A, B] =
-			(a: A) => taskBuilder(a)
-	}
-
-	trait Flow[A, B] { thisFlow =>
-
-		protected def attempt(a: A): Task[B]
-
-		def apply(a: A, isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
-			def work(): Unit = {
-				try attempt(a).attempt(true)(onComplete)
-				catch {
-					case NonFatal(e) => onComplete(Failure(e))
+			inline def apply(a: A, inline isRunningInDoSiThEx: Boolean)(onComplete: Try[B] => Unit): Unit = {
+				def work(): Unit = {
+					try attempt(a).attempt(true)(onComplete)
+					catch {
+						case NonFatal(e) => onComplete(Failure(e))
+					}
 				}
+
+				if isRunningInDoSiThEx then work()
+				else queueForSequentialExecution(work())
 			}
 
-			if isRunningInDoSiThEx then work()
-			else queueForSequentialExecution(() => work())
+			/** Connects this flow output with the input of the received one. */
+			def to[C](next: Flow[B, C]): Flow[A, C] =
+				(a: A) => thisFlow.attempt(a).flatMap(b => next.attempt(b))
+
+			/** Connects the received flow output with the input of this one. */
+			def from[Z](previous: Flow[Z, A]): Flow[Z, B] =
+				(z: Z) => previous.attempt(z).flatMap(a => thisFlow.attempt(a))
 		}
-
-		/** Connects this flow output with the input of the received one. */
-		def to[C](next: Flow[B, C]): Flow[A, C] =
-			(a: A) => thisFlow.attempt(a).flatMap(b => next.attempt(b))
-
-		/** Connects the received flow output with the input of this one. */
-		def from[Z](previous: Flow[Z, A]): Flow[Z, B] =
-			(z: Z) => previous.attempt(z).flatMap(a => thisFlow.attempt(a))
 	}
-}
