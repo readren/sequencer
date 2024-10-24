@@ -12,5 +12,12 @@
 /.bsp
 
 
+# VSC related
+/.vscode
+**/.bloop
+/.metals
+/**/metals.sbt
+
 # related to this particular project
 /logs
+

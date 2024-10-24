@@ -19,7 +19,6 @@ libraryDependencies ++= Seq(
 
     "ch.qos.logback" % "logback-classic" % "1.5.9",
 
-//    "org.scalatest" %% "scalatest" % "3.2.18" % Test,
     "org.scalatest" %% "scalatest" % "3.2.19" % Test,
     "org.scalacheck" %% "scalacheck" % "1.17.1" % Test,
     "org.scalatestplus" %% "scalacheck-1-18" % "3.2.19.0" % Test,
@@ -27,3 +26,8 @@ libraryDependencies ++= Seq(
     "org.typelevel" %% "scalacheck-effect-munit" % "1.0.4" % Test,
 
 )
+
+//scalacOptions ++= Seq(
+//    "-Xprint:typer", // Prints the state of the code after type checking
+//    "-Xprint:all"    // Prints all compilation phases (including macro transformations)
+//)
