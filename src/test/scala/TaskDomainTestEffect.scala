@@ -29,7 +29,7 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 
 		override def queueForSequentialExecution(runnable: Runnable): Unit = {
 			val id = sequencer.addAndGet(1)
-			// println(s"queuedForSequentialExecution: pre execute; id=$id, thread=${Thread.currentThread().getName}; runnable=$runnable")
+			println(s"queuedForSequentialExecution: pre execute; id=$id, thread=${Thread.currentThread().getName}; runnable=$runnable")
 			doSiThEx.execute(() => {
 				// println(s"queuedForSequentialExecution: pre run; id=$id; thread=${Thread.currentThread().getName}")
 				try {
@@ -41,14 +41,14 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 						// println(s"queuedForSequentialExecution: run completed abruptly with: $cause; id=$id; thread=${Thread.currentThread().getName}")
 						unhandledExceptions.addOne(cause.getMessage);
 						throw cause;
-				//} finally {
-				//	println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
+//				} finally {
+//					println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
 				}
 			})
 		}
 
 		override def reportFailure(failure: Throwable): Unit = {
-			// println(s"Reporting failure to munit: cause=${failure.getMessage}")
+			println(s"Reporting failure to munit: ${failure.getMessage}")
 			munitExecutionContext.reportFailure(failure)
 			doSiThEx.execute { () =>
 				val exceptionToReport = if failure.isInstanceOf[ExceptionReport] then failure.getCause else failure

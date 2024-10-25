@@ -27,6 +27,15 @@ libraryDependencies ++= Seq(
 
 )
 
+ThisBuild / scalacOptions ++= Seq(
+    "-experimental",
+    "-deprecation",
+    "-feature",
+    "-explain",
+    "-Xcheck-macros", // This flag enables extra runtime checks that try to find ill-formed trees or types as soon as they are created.
+    "-Ycheck:all", // This flag checks all compiler invariants for tree well-formedness. These checks will usually fail with an assertion error.
+    "-Xprint:macro"    // Prints all compilation phases (including macro transformations)
+)
 //scalacOptions ++= Seq(
 //    "-Xprint:typer", // Prints the state of the code after type checking
 //    "-Xprint:all"    // Prints all compilation phases (including macro transformations)

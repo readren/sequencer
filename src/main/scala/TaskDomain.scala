@@ -118,6 +118,12 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 */
 		protected def engage(onComplete: Try[A] => Unit): Unit;
 
+		private[taskflow] inline def engageBis(onComplete: Try[A] => Unit): Unit = engage(onComplete)
+
+//		inline def attempt2(inline isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit = {
+//			${ TaskDomainMacros.attemptImpl(isRunningInDoSiThEx, 'assistant, thisTaskDomain, 'thisTask, 'onComplete) }
+//		}
+
 		/**
 		 * Trigger the execution of this [[Task]].
 		 *
@@ -126,7 +132,12 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 * Must not throw non-fatal exceptions: `onComplet` must either terminate normally or fatally, but never with a non-fatal exception.                  
 		 * $isExecutedByDoSiThEx
 		 */
-		inline def attempt(inline isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit = {
+		inline def attempt(inline isRunningInDoSiThEx: Boolean = false)(inline onComplete: Try[A] => Unit): Unit = {
+			${ TaskDomainMacros.attemptImpl('isRunningInDoSiThEx, 'assistant, 'thisTask, 'onComplete)}
+		}
+
+		@deprecated
+		inline def attemptOld(inline isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit = {
 			if isRunningInDoSiThEx then engage(onComplete)
 			else queueForSequentialExecution(engage(onComplete))
 		}
@@ -470,7 +481,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 *
 		 * @return the task described in the method description.
 		 * */
-		inline def never: Task[Nothing] = new Never
+		inline def never: Task[Nothing] = Never
 
 		/** Creates a [[Task]] whose result is calculated at the call site even before the task is constructed.  The result of its execution is always the provided value.
 		 *
@@ -736,7 +747,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 * */
-	final class Never extends Task[Nothing] {
+	object Never extends Task[Nothing] {
 		override def engage(onComplete: Try[Nothing] => Unit): Unit = ()
 	}
 
@@ -758,7 +769,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		override def toFutureHardy(isRunningInDoSiThEx: Boolean = false): Future[Try[A]] =
 			Future.successful(tryA)
 
-
+		override def toString: String = deriveToString[Immediate[A]](this)
 	}
 
 	/** A [[Task]] that, when executed, calls the `resultSupplier` within the $DoSiThEx and if it finishes:
@@ -778,6 +789,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 				}
 			onComplete(result)
 		}
+
+		override def toString: String = deriveToString[Own[A]](this)
 	}
 
 	/** A [[Task]] that just waits the completion of the specified [[Future]]. The result of the task, when executed, is the result of the received [[Future]].
@@ -789,6 +802,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 	final class Wait[+A](resultFuture: Future[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit =
 			resultFuture.onComplete(onComplete)(ownSingleThreadExecutionContext)
+
+		override def toString: String = deriveToString[Wait[A]](this)
 	}
 
 	/** A [[Task]] that, when executed, triggers the execution of a process in an alien executor and waits its result, successful or not.
@@ -807,6 +822,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 				}
 			future.onComplete(onComplete)(ownSingleThreadExecutionContext)
 		}
+
+		override def toString: String = deriveToString[Alien[A]](this)
 	}
 
 
@@ -829,6 +846,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 				onComplete(tryConsumerResult)
 			}
 		}
+
+		override def toString: String = deriveToString[Consume[A]](this)
 	}
 
 	/**
@@ -864,6 +883,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 					onComplete(f)
 			}
 		}
+
+		override def toString: String = deriveToString[WithFilter[A]](this)
 	}
 
 
@@ -893,6 +914,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 				onComplete(tryB)
 			};
 		}
+
+		override def toString: String = deriveToString[Transform[A, B]](this)
 	}
 
 	/**
@@ -919,6 +942,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 				taskB.attempt(true)(onComplete)
 			}
 		}
+
+		override def toString: String = deriveToString[Compose[A, B]](this)
 	}
 
 
@@ -961,6 +986,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 				}
 			}
 		}
+
+		override def toString: String = deriveToString[Combine[A, B, C]](this)
 	}
 
 
@@ -1014,6 +1041,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 
 			loop(0, 0)
 		}
+
+		override def toString: String = deriveToString[RepeatHardyUntilSome[A, B]](this)
 	}
 
 	/**
@@ -1060,6 +1089,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 
 			loop(0, ta0, 0)
 		}
+
+		override def toString: String = deriveToString[RepeatHardyWhileNone[A, B]](this)
 	}
 
 		/** Task that, when executed, repeatedly constructs and executes tasks as long as the `condition` is met.
@@ -1099,6 +1130,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 
 				loop(0, tryA0, 0)
 			}
+
+			override def toString: String = deriveToString[WhileRightRepeatHardy[A, B]](this)
 		}
 
 		/** Task that, when executed, repeatedly constructs and executes tasks until the result is [[Left]] or failed.
@@ -1142,6 +1175,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 
 				loop(0, a0, 0)
 			}
+
+			override def toString: String = deriveToString[RepeatUntilLeft[A, B]](this)
 		}
 
 		/** Task that, when executed, repeatedly constructs and executes tasks until the result is [[Right]] or the `maxRetries` is reached.
@@ -1188,6 +1223,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 
 				loop(0, 0)
 			}
+
+			override def toString: String = deriveToString[RetryUntilRight[A, B]](this)
 		}
 
 		/** A commitment to complete a [[Task]].
