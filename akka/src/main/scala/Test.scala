@@ -1,4 +1,4 @@
-package readren.taskflow
+package readren.taskflow.akka
 
 import akka.actor.typed.scaladsl.{Behaviors, LoggerOps}
 import akka.actor.typed.*

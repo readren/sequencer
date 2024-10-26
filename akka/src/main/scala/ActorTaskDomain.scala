@@ -1,8 +1,9 @@
-package readren.taskflow
+package readren.taskflow.akka
 
 import akka.actor.typed.*
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import akka.util.Timeout
+import readren.taskflow.TaskDomain
 
 import scala.reflect.Typeable
 import scala.util.{Failure, Success}

@@ -1,4 +1,4 @@
-package readren.taskflow
+package readren.taskflow.akka
 
 import scala.annotation.tailrec
 import scala.concurrent.{ExecutionContext, Future, Promise}

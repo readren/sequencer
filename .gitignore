@@ -7,9 +7,13 @@
 
 
 # SBT related
+.bsp
 /target
 **/project/target/
-/.bsp
+/core/target
+/akka/target
+/akka/**/project/target/
+/akka/.bsp
 
 
 # VSC related
