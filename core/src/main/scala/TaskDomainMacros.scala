@@ -17,7 +17,7 @@ object TaskDomainMacros {
 
 			'{
 				new Runnable {
-					override def run(): Unit = $taskExpr.engageBis($onCompleteExpr)
+					override def run(): Unit = $taskExpr.engageBridge($onCompleteExpr)
 
 					override def toString: String = s"{ ${$taskExpr.toString}${$sourceInfo}"
 				}
@@ -26,15 +26,14 @@ object TaskDomainMacros {
 
 		isRunningInDoSiThExExpr.value match {
 			case Some(isRunningInDoSiThEx) =>
-				if isRunningInDoSiThEx then '{ $taskExpr.engageBis($onCompleteExpr) }
+				if isRunningInDoSiThEx then '{ $taskExpr.engageBridge($onCompleteExpr) }
 				else '{ $assistantExpr.queueForSequentialExecution($runnable) }
 
 			case None =>
 				'{
-					if $isRunningInDoSiThExExpr then $taskExpr.engageBis($onCompleteExpr)
+					if $isRunningInDoSiThExExpr then $taskExpr.engageBridge($onCompleteExpr)
 					else $assistantExpr.queueForSequentialExecution($runnable)
 				}
-//				queueForSequentialExecutionImpl(assistantExpr, '{ $taskExpr.engageBis($onCompleteExpr) } )
 		}
 	}
 

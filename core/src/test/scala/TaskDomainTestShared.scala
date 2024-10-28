@@ -2,6 +2,7 @@ package readren.taskflow
 
 import org.scalacheck.{Arbitrary, Gen}
 
+import java.util.concurrent.{ExecutorService, Executors}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
 
@@ -9,6 +10,17 @@ import scala.util.{Failure, Success, Try}
 class TaskDomainTestShared[TD <: TaskDomain](val taskDomain: TD, synchronousOnly: Boolean = false) {
 
 	import taskDomain.*
+
+	val foreignTaskDomain: TaskDomain = {
+		val foreignAssistant: TaskDomain.Assistant = new TaskDomain.Assistant {
+			private val executor = Executors.newSingleThreadExecutor()
+
+			override def queueForSequentialExecution(runnable: Runnable): Unit = executor.execute(runnable)
+
+			override def reportFailure(cause: Throwable): Unit = throw cause
+		}
+		new TaskDomain(foreignAssistant) {}
+	}
 
 	extension [A](genA: Gen[A]) {
 		def toTry(failureLabel: String): Gen[Try[A]] = Gen.frequency(
@@ -45,8 +57,12 @@ class TaskDomainTestShared[TD <: TaskDomain](val taskDomain: TD, synchronousOnly
 
 			val alienGen: Gen[Task[A]] = genA.toFutureBuilder(s"$failureLabel / Task.alien").map(Task.alien)
 
+			val foreignGen: Gen[Task[A]] = genA.toFutureBuilder(s"$failureLabel / Task.foreign").map {
+				futureBuilder => Task.foreign(foreignTaskDomain)(foreignTaskDomain.Task.alien(futureBuilder))
+			}
+
 			if synchronousOnly then Gen.oneOf(immediateGen, ownGen)
-			else Gen.oneOf(immediateGen, ownGen, waitGen, alienGen)
+			else Gen.oneOf(immediateGen, ownGen, waitGen, alienGen, foreignGen)
 		}
 	}
 

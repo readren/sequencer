@@ -29,7 +29,7 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 
 		override def queueForSequentialExecution(runnable: Runnable): Unit = {
 			val id = sequencer.addAndGet(1)
-			println(s"queuedForSequentialExecution: pre execute; id=$id, thread=${Thread.currentThread().getName}; runnable=$runnable")
+			// println(s"queuedForSequentialExecution: pre execute; id=$id, thread=${Thread.currentThread().getName}; runnable=$runnable")
 			doSiThEx.execute(() => {
 				// println(s"queuedForSequentialExecution: pre run; id=$id; thread=${Thread.currentThread().getName}")
 				try {
@@ -41,8 +41,8 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 						// println(s"queuedForSequentialExecution: run completed abruptly with: $cause; id=$id; thread=${Thread.currentThread().getName}")
 						unhandledExceptions.addOne(cause.getMessage);
 						throw cause;
-//				} finally {
-//					println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
+					//				} finally {
+					//					println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
 				}
 			})
 		}
@@ -155,7 +155,7 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 
 			/** Do the test for a single operation */
 			def check(operation: Task[Int] => Task[Int]): Future[Boolean] = {
-				// Apply the operation to the random task. The `recover` is to ensure that the task completes successfully in order to the operation is ever evaluated.
+				// Apply the operation to the random task. The `recover` is to ensure that the random task completes successfully in order for the operation to always be evaluated.
 				val future = operation {
 					task.recover { case cause => exception.getMessage.hashCode }
 				}.toFutureHardy()
@@ -175,23 +175,31 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 
 				// Depending on the kind of exception, fatal or not, the check is very different.
 				if NonFatal(exception) then {
-					// When the exception is non-fatal the task should complete with a Failure containing the cause.
-					val nonFatalWasHandled = future.map {
+					// When the exception is non-fatal the task should complete with a Failure containing the exception thrown by the transformation.
+					val nonFatalWasHandled: Future[Boolean] = future.map {
 						case Failure(`exception`) => true
-						case _ => false
+						case Failure(wrapper) if wrapper.getCause eq exception => true
+						case result =>
+							throw new AssertionError(s"The task completed but with an unexpected result. Expected: ${Failure(exception)}, Actual: $result")
 					}
-					Future.firstCompletedOf(List(exceptionWasNotHandled.map(!_), nonFatalWasHandled))
+					Future.firstCompletedOf(List(nonFatalWasHandled, exceptionWasNotHandled.map { wasNotHandled =>
+						assert(!wasNotHandled, "A non fatal was not handled despite is should.")
+						false
+					}))
 				} else {
 					// When the exception is fatal it should remain unhandled, causing the doSiThEx thread to terminate. Consequently, the exception will be logged in the unhandledExceptions set, and the task and associated Future will never complete.
 					// The following future will complete with `false` if the fatal exception was handled. Otherwise, it will never complete.
 					val fatalWasHandled = future.map { result =>
 						// println(s"Was handled somehow: result=$result")
-						false
+						throw new AssertionError(s"The task completed despite it shouldn't. Result=$result")
 					}
 
 
 					// The result of only one of the two futures, `fatalWasHandled` and `exceptionWasNotHandled`, is enough to know if the check is passed. So get the result of the one that completes first.
-					Future.firstCompletedOf(List(exceptionWasNotHandled, fatalWasHandled))
+					Future.firstCompletedOf(List(fatalWasHandled, exceptionWasNotHandled.map { wasNotHandled =>
+						assert(wasNotHandled, "The task handled the fatal exception despite it shouldn't");
+						true
+					}))
 				}
 
 			}
@@ -199,6 +207,8 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 			def f1[A, B](a: A): B = throw exception
 
 			def f2[A, B, C](a: A, b: B): C = throw exception
+
+			println(s"Begin: task=$task, exception=$exception")
 
 			for {
 				foreachTestResult <- check(_.foreach(_ => throw exception).map(_ => 0))
@@ -214,6 +224,8 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined()(f2))
 				repeatedWhileNoneTestResult <- check(_.repeatedWhileNone(Success(0))(f2))
 				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0))(f2))
+				ownTestResult <- check(_.flatMap(_ => Task.own(() => throw exception)))
+				alienTestResult <- check(_.flatMap(_ => Task.alien(() => throw exception)))
 			} yield
 				assert(
 					foreachTestResult
@@ -228,7 +240,9 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 						&& repeatedUntilSomeTestResult
 						&& repeatedUntilDefinedTestResult
 						&& repeatedWhileNoneTestResult
-						&& repeatedWhileUndefinedTestResult,
+						&& repeatedWhileUndefinedTestResult
+						&& ownTestResult
+						&& alienTestResult,
 					s"""
 					   |foreach: $foreachTestResult
 					   |map: $mapTestResult
@@ -243,7 +257,8 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 					   |repeatedUntilDefined: $repeatedUntilDefinedTestResult
 					   |repeatedWhileNone: $repeatedWhileNoneTestResult
 					   |repeatedWhileUndefined: $repeatedWhileUndefinedTestResult
-				""".stripMargin
+					   |own: $ownTestResult
+					   |alien: $alienTestResult""".stripMargin
 				)
 			// TODO add a test to check if Task.andThen effect-full function is guarded.
 		}
@@ -254,11 +269,11 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 
 			/** Do the test for a single operation */
 			def check[R](operation: Task[Int] => Task[R]): Future[Boolean] = {
-				// Apply the operation to the random task.
+				// Apply the operation to the random task and trigger the execution passing a faulty on-complete callback.
 				operation(task).attempt()(tryR => throw exception)
 
-				// Build a task that completes with `true` as soon as the `exception` is found among the unhandled exceptions logged in the `unhandledExceptions` set; or `false` if it isn't found after 99 milliseconds.
-				val exceptionWasNotHandledNorReported = sleep1ms
+				// Build and execute a task that completes with `true` as soon as the `exception` is found among the unhandled exceptions logged in the `unhandledExceptions` set; or `false` if it isn't found after 99 milliseconds.
+				sleep1ms
 					// Check if the exception was reported or unhandled
 					.flatMap { _ =>
 						Task.mine { () => unhandledExceptions.remove(exception.getMessage) || reportedExceptions.remove(exception.getMessage) }
@@ -278,16 +293,16 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 							None
 						}
 					}.toFuture()
-				exceptionWasNotHandledNorReported
 			}
 
 			val randomInt = exception.getMessage.hashCode()
 			val smallNonNegativeInt = randomInt % 9
 			val randomBool = (randomInt % 2) == 0
 			val randomTryInt = if randomBool then Success(randomInt) else Failure(exception)
-			println(s"Begin: task=$task, exception=$exception, randomInt=$randomInt, randomBool=$randomBool")
+			// println(s"Begin: task=$task, exception=$exception, randomInt=$randomInt, randomBool=$randomBool")
 
 			for {
+				factoryTestResult <- check(identity)
 				foreachTestResult <- check(_.foreach(_ => ()))
 				mapTestResult <- check(_.map(identity))
 				flatMapTestResult <- check(_.flatMap(_ => task))
@@ -303,7 +318,8 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0)) { case (n, tryInt) if n > smallNonNegativeInt => randomInt })
 			} yield
 				assert(
-					foreachTestResult
+					factoryTestResult
+						&& foreachTestResult
 						&& mapTestResult
 						&& flatMapTestResult
 						&& withFilterTestResult
@@ -317,6 +333,7 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 						&& repeatedWhileNoneTestResult
 						&& repeatedWhileUndefinedTestResult,
 					s"""
+					   |factory: $factoryTestResult
 					   |foreach: $foreachTestResult
 					   |map: $mapTestResult
 					   |flatMap: $flatMapTestResult

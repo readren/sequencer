@@ -118,7 +118,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 */
 		protected def engage(onComplete: Try[A] => Unit): Unit;
 
-		private[taskflow] inline def engageBis(onComplete: Try[A] => Unit): Unit = engage(onComplete)
+		/** A bridge to access the [[engage]] from macros in [[TaskDomainMacros]]. */
+		private[taskflow] inline def engageBridge(onComplete: Try[A] => Unit): Unit = engage(onComplete)
 
 //		inline def attempt2(inline isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit = {
 //			${ TaskDomainMacros.attemptImpl(isRunningInDoSiThEx, 'assistant, thisTaskDomain, 'thisTask, 'onComplete) }
@@ -134,12 +135,6 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 */
 		inline def attempt(inline isRunningInDoSiThEx: Boolean = false)(inline onComplete: Try[A] => Unit): Unit = {
 			${ TaskDomainMacros.attemptImpl('isRunningInDoSiThEx, 'assistant, 'thisTask, 'onComplete)}
-		}
-
-		@deprecated
-		inline def attemptOld(inline isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit = {
-			if isRunningInDoSiThEx then engage(onComplete)
-			else queueForSequentialExecution(engage(onComplete))
 		}
 
 		/** Triggers the execution of this [[Task]] and returns a [[Future]] of its result.
@@ -373,6 +368,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 * 		- normally with `Some(tryB)`, completes with `tryB`
 		 * 		- normally with `None`, goes back to the first step.
 		 *
+		 * $threadSafe
+		 *
 		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
 		 * @param condition function that decides if the loop continues or not based on:
 		 * 	- the number of already completed cycles,
@@ -395,6 +392,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 * 			- abruptly, completes with the cause.
 		 * 			- normally with `Some(tryB)`, completes with `tryB`
 		 * 			- normally with `None`, goes back to the first step.
+		 *
+		 * $threadSafe
 		 *
 		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
 		 * @param condition function that decides if the loop continues or not based on:
@@ -421,14 +420,14 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		/**
 		 * Repeats this [[Task]] while the given function returns [[None]].
 		 * ===Detailed behavior:===
-		 * Creates a [[Task]] that, when executed, it will:
-		 *  - Apply the `condition` function to `(n, ts0)` where `n` is the number of already completed evaluations of it.
+		 * Returns a [[Task]] that, when executed, it will:
+		 *  - Apply the `condition` function to `(n, ts0)` where `n` is the number of already completed evaluations of it (starts with zero).
 		 *  - If the evaluation finishes:
 		 *  	- Abruptly, completes with the cause.
 		 *  	- Normally returning `Some(b)`, completes with `b`.
 		 *  	- Normally returning `None`, executes the `taskA` and goes back to the first step replacing `ts0` with the result.
 		 *
-		 * $onCompleteExecutedByDoSiThEx
+		 * $threadSafe
 		 *
 		 * @param ts0 the value passed as second parameter to `condition` the first time it is evaluated.
 		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
@@ -440,17 +439,17 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 			new RepeatHardyWhileNone[S, B](thisTask, ts0, maxRecursionDepthPerExecutor: Int)(condition)
 
 		/**
-		 * Creates a task that, when executed, repeatedly executes this [[Task]] while a [[PartialFunction]] is undefined.
+		 * Returns a task that, when executed, repeatedly executes this [[Task]] while a [[PartialFunction]] is undefined.
 		 * ===Detailed behavior:===
-		 * When this [[Task]] is executed, it will:
-		 *  - Check if the partial function is defined in `(n, ts0)` where `n` is the number of already completed evaluations of it. If it:
+		 * Returns a [[Task]] that, when executed, it will:
+		 *  - Check if the partial function is defined in `(n, ts0)` where `n` is the number of already completed evaluations of it (starts with zero). If it:
 		 *		- fails, completes with the cause.
 		 *  	- is undefined, executes the `taskA` and goes back to the first step replacing `ts0` with the result.
 		 *  	- is defined, evaluates it and if it finishes:
 		 *			- abruptly, completes with the cause.
 		 *			- normally, completes with the result.
 		 *
-		 * $onCompleteExecutedByDoSiThEx
+		 * $threadSafe
 		 *
 		 * @param ts0 the value passed as second parameter to `condition` the first time it is evaluated.
 		 * @param maxRecursionDepthPerExecutor $maxRecursionDepthPerExecutor
@@ -461,6 +460,22 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		inline def repeatedWhileUndefined[S >: A, B](ts0: Try[S], maxRecursionDepthPerExecutor: Int = 9)(pf: PartialFunction[(Int, Try[S]), B]): Task[B] = {
 			repeatedWhileNone(ts0, maxRecursionDepthPerExecutor)(Function.untupled(pf.lift));
 		}
+
+		/**
+		 * Wraps this task into another that belongs to other [[TaskDomain]].
+		 * Useful to chain [[Task]]'s operations that involve different [[TaskDomain]]s.
+		 * ===Detailed behavior===
+		 * Returns a task that, when executed, it will execute this task within this [[TaskDomain]]'s $DoSiThEx and complete with the same result.
+		 * CAUTION: Avoid closing over the same mutable variable from two transformations applied to Task instances belonging to different [[TaskDomain]]s.
+		 * Remember that all routines (e.g., functions, procedures, predicates, and callbacks) provided to [[Task]] methods are executed by the $DoSiThEx of the [[TaskDomain]] that owns the [[Task]] instance on which the method is called.
+		 * Therefore, calling [[attempt]] on the returned task will execute the `onComplete` passed to it within the $DoSiThEx of the `otherTaskDomain`.
+		 *
+		 * $threadSafe
+		 *
+		 * @param otherTaskDomain the [[TaskDomain]] to which the returned task will belong.
+		 * */
+		inline def onBehalfOf(otherTaskDomain: TaskDomain): otherTaskDomain.Task[A] =
+			otherTaskDomain.Task.foreign(thisTaskDomain)(this)
 
 		/** Casts the type-path of this [[Task]] to the received [[TaskDomain]]. Usar con cautela.
 		 * Esta operación no hace nada en tiempo de ejecución. Solo engaña al compilador para evitar que chille cuando se opera con [[Task]]s que tienen distinto type-path pero se sabe que corresponden al mismo actor ejecutor.
@@ -549,7 +564,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 */
 		inline def wait[A](resultFuture: Future[A]): Task[A] = new Wait(resultFuture);
 
-		/** Creates a [[Task]] that, when executed, triggers the execution of a process in an alien executor and waits its result, successful or not.
+		/** Creates a [[Task]] that, when executed, triggers the execution of a process in an alien executor, and waits its result, successful or not.
 		 * The process executor is usually foreign but may be the $DoSiThEx.
 		 *
 		 * $threadSafe
@@ -558,6 +573,17 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 * @return the task described in the method description.
 		 */
 		inline def alien[A](futureBuilder: () => Future[A]): Task[A] = new Alien(futureBuilder);
+
+        /**
+		 * Creates a [[Task]] that, when executed, triggers the execution of a task that belongs to another [[TaskDomain]] within that [[TaskDomain]]'s $DoSiThEx.
+		 * $threadSafe
+		 *
+		 * @param foreignTaskDomain the [[TaskDomain]] to whom the `foreignTask` belongs.
+		 * @return a task that belongs to this [[TaskDomain]] */
+		inline def foreign[A](foreignTaskDomain: TaskDomain)(foreignTask: foreignTaskDomain.Task[A]): Task[A] = {
+			if foreignTaskDomain eq thisTaskDomain then foreignTask.asInstanceOf[thisTaskDomain.Task[A]]
+			else new Foreign(foreignTaskDomain)(foreignTask)
+		}
 
 		/**
 		 * Creates a [[Task]] that simultaneously triggers the execution of two tasks and returns their results combined with the received function.
@@ -826,6 +852,13 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		override def toString: String = deriveToString[Alien[A]](this)
 	}
 
+	final class Foreign[+A](foreignTaskDomain: TaskDomain)(foreignTask: foreignTaskDomain.Task[A]) extends Task[A] {
+		override def engage(onComplete: Try[A] => Unit): Unit = {
+			foreignTask.attempt() { tryA => queueForSequentialExecution(onComplete(tryA)) }
+		}
+
+		override def toString: String = deriveToString[Foreign[A]](this)
+	}
 
 	/**
 	 * A [[Task]] that consumes the results of the received task for its side effects.
