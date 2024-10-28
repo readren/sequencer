@@ -3,32 +3,32 @@ package readren.taskflow.akka
 import akka.actor.typed.*
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import akka.util.Timeout
-import readren.taskflow.TaskDomain
+import readren.taskflow.Doer
 
 import scala.reflect.Typeable
 import scala.util.{Failure, Success}
 
-object ActorTaskDomain {
+object ActorBasedDoer {
 
-	trait Aide extends TaskDomain.Assistant {
+	trait Aide extends Doer.Assistant {
 		def scheduler: Scheduler
 	}
 
 	private[taskflow] case class Procedure(runnable: Runnable)
 
-	def setup[A: Typeable](frontier: (ActorContext[A], ActorTaskDomain) => Behavior[A]): Behavior[A] = {
+	def setup[A: Typeable](frontier: (ActorContext[A], ActorBasedDoer) => Behavior[A]): Behavior[A] = {
 		val behaviorA = Behaviors.setup[A] { ctx =>
 			// TODO analyze if is it OK to upcast the ActorContext in this situation?
-			val domain: ActorTaskDomain = new ActorTaskDomain(buildAide(ctx.asInstanceOf[ActorContext[Procedure]]));
-			frontier(ctx, domain)
+			val doer: ActorBasedDoer = new ActorBasedDoer(buildAide(ctx.asInstanceOf[ActorContext[Procedure]]));
+			frontier(ctx, doer)
 		}
 
 		Behaviors.intercept(procedureInterceptor)(behaviorA).narrow[A]
 	}
 
-	def setup[A: Typeable](ctxA: ActorContext[A])(frontier: ActorTaskDomain => Behavior[A]): Behavior[A] = {
-		val domain: ActorTaskDomain = new ActorTaskDomain(buildAide(ctxA.asInstanceOf[ActorContext[Procedure]]));
-		val behaviorA = frontier(domain)
+	def setup[A: Typeable](ctxA: ActorContext[A])(frontier: ActorBasedDoer => Behavior[A]): Behavior[A] = {
+		val doer: ActorBasedDoer = new ActorBasedDoer(buildAide(ctxA.asInstanceOf[ActorContext[Procedure]]));
+		val behaviorA = frontier(doer)
 		Behaviors.intercept(procedureInterceptor)(behaviorA).narrow
 	}
 
@@ -50,7 +50,7 @@ object ActorTaskDomain {
 		}.asInstanceOf[BehaviorInterceptor[A | Procedure, A]]
 }
 
-class ActorTaskDomain(assistant: ActorTaskDomain.Aide) extends TaskDomain(assistant) {
+class ActorBasedDoer(assistant: ActorBasedDoer.Aide) extends Doer(assistant) {
 
 	extension [A](target: ActorRef[A]) {
 		def say(message: A): Task[Unit] = Task.mine(() => target ! message)

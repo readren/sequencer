@@ -1,6 +1,6 @@
 package readren.taskflow
 
-import TaskDomain.ExceptionReport
+import Doer.ExceptionReport
 
 import munit.ScalaCheckEffectSuite
 import org.scalacheck.Arbitrary
@@ -15,14 +15,14 @@ import scala.concurrent.{Await, Future}
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
-class TaskDomainTestEffect extends ScalaCheckEffectSuite {
+class DoerTestEffect extends ScalaCheckEffectSuite {
 
 	/** Remembers the exceptions that were unhandled in the DoSiThEx's thread.
 	 * CAUTION: this variable should be accessed within the DoSiThEx thread only. */
 	private val unhandledExceptions = mutable.Set.empty[String]
 	private val reportedExceptions = mutable.Set.empty[String]
 
-	private val assistant = new TaskDomain.Assistant {
+	private val assistant = new Doer.Assistant {
 		private val doSiThEx = Executors.newSingleThreadExecutor()
 
 		private val sequencer: AtomicInteger = new AtomicInteger(0)
@@ -58,11 +58,11 @@ class TaskDomainTestEffect extends ScalaCheckEffectSuite {
 
 	}
 
-	private val taskDomain: TaskDomain = new TaskDomain(assistant) {}
+	private val doer: Doer = new Doer(assistant) {}
 
-	import taskDomain.*
+	import doer.*
 
-	private val shared = new TaskDomainTestShared[taskDomain.type](taskDomain)
+	private val shared = new DoerTestShared[doer.type](doer)
 	import shared.{*, given}
 
 	// Custom equality for Task based on the result of attempt

@@ -6,20 +6,20 @@ import java.util.concurrent.{ExecutorService, Executors}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
 
-/** Contains tools used by the suites that test [[TaskDomain]] behavior. */
-class TaskDomainTestShared[TD <: TaskDomain](val taskDomain: TD, synchronousOnly: Boolean = false) {
+/** Contains tools used by the suites that test [[Doer]] behavior. */
+class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false) {
 
-	import taskDomain.*
+	import doer.*
 
-	val foreignTaskDomain: TaskDomain = {
-		val foreignAssistant: TaskDomain.Assistant = new TaskDomain.Assistant {
+	val foreignDoer: Doer = {
+		val foreignAssistant: Doer.Assistant = new Doer.Assistant {
 			private val executor = Executors.newSingleThreadExecutor()
 
 			override def queueForSequentialExecution(runnable: Runnable): Unit = executor.execute(runnable)
 
 			override def reportFailure(cause: Throwable): Unit = throw cause
 		}
-		new TaskDomain(foreignAssistant) {}
+		new Doer(foreignAssistant) {}
 	}
 
 	extension [A](genA: Gen[A]) {
@@ -58,7 +58,7 @@ class TaskDomainTestShared[TD <: TaskDomain](val taskDomain: TD, synchronousOnly
 			val alienGen: Gen[Task[A]] = genA.toFutureBuilder(s"$failureLabel / Task.alien").map(Task.alien)
 
 			val foreignGen: Gen[Task[A]] = genA.toFutureBuilder(s"$failureLabel / Task.foreign").map {
-				futureBuilder => Task.foreign(foreignTaskDomain)(foreignTaskDomain.Task.alien(futureBuilder))
+				futureBuilder => Task.foreign(foreignDoer)(foreignDoer.Task.alien(futureBuilder))
 			}
 
 			if synchronousOnly then Gen.oneOf(immediateGen, ownGen)

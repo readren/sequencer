@@ -108,7 +108,7 @@ object Prueba {
 
 	def apply30(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
+			ActorBasedDoer.setup[Pregunta](ctx) { taskContext =>
 				import taskContext.*
 
 				Behaviors.receiveMessage {
@@ -126,7 +126,7 @@ object Prueba {
 
 	def apply31(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
+			ActorBasedDoer.setup[Pregunta](ctx) { taskContext =>
 				import taskContext.*
 
 				val flow = Flow.wrap[ActorRef[Respuesta], Unit] { replyTo1 =>
@@ -146,7 +146,7 @@ object Prueba {
 	
 	def apply4(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			ActorTaskDomain.setup[Pregunta](ctx) { taskContext =>
+			ActorBasedDoer.setup[Pregunta](ctx) { taskContext =>
 				import taskContext.*
 
 				val paso2 = Behaviors.receiveMessage[Pregunta] {

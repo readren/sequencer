@@ -1,14 +1,14 @@
 package readren.taskflow
 
-import TaskDomain.Assistant
+import Doer.Assistant
 
 import scala.quoted.{Expr, Quotes, Type}
 import scala.util.Try
 
-object TaskDomainMacros {
+object DoerMacros {
 
 
-	def attemptImpl[A: Type](isRunningInDoSiThExExpr: Expr[Boolean], assistantExpr: Expr[TaskDomain.Assistant], taskExpr: Expr[TaskDomain#Task[A]], onCompleteExpr: Expr[Try[A] => Unit])(using quotes: Quotes): Expr[Unit] = {
+	def attemptImpl[A: Type](isRunningInDoSiThExExpr: Expr[Boolean], assistantExpr: Expr[Doer.Assistant], taskExpr: Expr[Doer#Task[A]], onCompleteExpr: Expr[Try[A] => Unit])(using quotes: Quotes): Expr[Unit] = {
 		import quotes.reflect.*
 
 		def runnable: Expr[Runnable] = {
@@ -66,6 +66,6 @@ object TaskDomainMacros {
 		// Build exception message.
 		val message = Expr(s"Reported at ${pos.sourceFile.name}:${pos.startLine + 1} => $snippet")
 
-		'{ $assistantExpr.reportFailure(new TaskDomain.ExceptionReport($message, $causeExpr)) }
+		'{ $assistantExpr.reportFailure(new Doer.ExceptionReport($message, $causeExpr)) }
 	}
 }

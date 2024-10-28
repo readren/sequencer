@@ -9,18 +9,18 @@ import org.scalatestplus.scalacheck.ScalaCheckPropertyChecks
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
-/** This suite is limited to synchronous tests and therefore it only tests part of the behavior of [[TaskDomain]].
- * All the behavior tested in this suite is also tested in the [[TaskDomainTestEffect]] suite. 
- * This suite is kept despite the [[TaskDomainTestEffect]] existence because it is easier to debug in a synchronous environment.
+/** This suite is limited to synchronous tests and therefore it only tests part of the behavior of [[Doer]].
+ * All the behavior tested in this suite is also tested in the [[DoerTestEffect]] suite. 
+ * This suite is kept despite the [[DoerTestEffect]] existence because it is easier to debug in a synchronous environment.
  * */
-class TaskDomainTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matchers {
+class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matchers {
 
-	private var oDomainThreadId: Option[Long] = None
-	private val assistant = new TaskDomain.Assistant {
+	private var oDoerThreadId: Option[Long] = None
+	private val assistant = new Doer.Assistant {
 		override def queueForSequentialExecution(runnable: Runnable): Unit = {
-			oDomainThreadId match {
-				case None => oDomainThreadId = Some(Thread.currentThread().getId)
-				case Some(domainThreadId) => assert(domainThreadId == Thread.currentThread().getId)
+			oDoerThreadId match {
+				case None => oDoerThreadId = Some(Thread.currentThread().getId)
+				case Some(doerThreadId) => assert(doerThreadId == Thread.currentThread().getId)
 			}
 			runnable.run()
 		}
@@ -28,12 +28,12 @@ class TaskDomainTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with 
 		override def reportFailure(cause: Throwable): Unit = throw cause
 	}
 
-	val taskDomain: TaskDomain = new TaskDomain(assistant) {}
+	val doer: Doer = new Doer(assistant) {}
 
-	import taskDomain.*
+	import doer.*
 	import Task.*
 
-	val shared = new TaskDomainTestShared[taskDomain.type](taskDomain, true)
+	val shared = new DoerTestShared[doer.type](doer, true)
 	import shared.{given, *}
 
 	private def checkEquality[A](task1: Task[A], task2: Task[A]): Unit = {

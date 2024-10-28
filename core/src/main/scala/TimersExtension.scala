@@ -5,7 +5,7 @@ import scala.util.{Try, Success, Failure}
 
 
 object TimersExtension {
-	trait Assistant extends TaskDomain.Assistant {
+	trait Assistant extends Doer.Assistant {
 		/** The implementation should not throw non-fatal exceptions. */
 		def queueForSequentialExecutionDelayed(key: Long, delay: FiniteDuration, runnable: Runnable): Unit
 
@@ -14,7 +14,7 @@ object TimersExtension {
 	}
 }
 
-trait TimersExtension(assistant: TimersExtension.Assistant) { self: TaskDomain =>
+trait TimersExtension(assistant: TimersExtension.Assistant) { self: Doer =>
 
 	import TimersExtension._;
 

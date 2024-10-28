@@ -5,12 +5,12 @@ import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 
-object TaskDomain {
-	/** Specifies what instances of [[TaskDomain]] require to function properly. */
+object Doer {
+	/** Specifies what an instance of [[Doer]] require to function properly. */
 	trait Assistant {
 		/**
 		 * The implementation should queue the execution of all the [[Runnable]]s this method receives on the same single-thread executor. Note that "single" does not imply "same". The thread may change.
-		 * From now on said executor will be called "the domain's single-thread executor" or DoSiThEx for short.
+		 * From now on said executor will be called "the doer's single-thread executor" or DoSiThEx for short.
 		 * The implementation should guarantee that passed [[Runnable]]s are executed one after the other (no more than one [[Runnable]] will be active at any given time) and preferably in the order of submission.
 		 * If the call is executed by the DoSiThEx the [[Runnable]]'s execution will not start until the DoSiThEx completes its current execution and gets free to start a new one.
 		 * The implementation should not throw non-fatal exceptions.
@@ -33,26 +33,26 @@ object TaskDomain {
 
 /**
  * Encloses the [[Task]]s instances that are executed by the same single-thread executor, which is called the DoSiThEx.
- * All the deferred actions preformed by the operations of the [[Task]]s enclosed by this [[TaskDomain]] are executed by calling the [[assistant.queueForSequentialExecution]] method unless the method documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive.
+ * All the deferred actions preformed by the operations of the [[Task]]s enclosed by this [[Doer]] are executed by calling the [[queueForSequentialExecution]] method unless the method documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive.
  * ==Note:==
- * At the time of writing, almost all the operations and classes in this source file are thread-safe and may function properly on any kind of execution context. The only exceptions are the classes [[Combine]] and [[Commitment]], which could be enhanced to support concurrency. However, given that a design goal was to allow [[Task]] and the functions their operators receive to close over variables in code sections guaranteed to be executed solely by the DoSiThEx (domain's single-threaded executor), the effort and cost of making them concurrent would be unnecessary.
- * See [[TaskDomain.Assistant.queueForSequentialExecution()]].
+ * At the time of writing, almost all the operations and classes in this source file are thread-safe and may function properly on any kind of execution context. The only exceptions are the classes [[Combine]] and [[Commitment]], which could be enhanced to support concurrency. However, given that a design goal was to allow [[Task]] and the functions their operators receive to close over variables in code sections guaranteed to be executed solely by the DoSiThEx (doer's single-threaded executor), the effort and cost of making them concurrent would be unnecessary.
+ * See [[Doer.Assistant.queueForSequentialExecution()]].
  *
- * @define DoSiThEx DoSiThEx (domain's single-thread executor)
- * @define onCompleteExecutedByDoSiThEx El call-back `onComplete` pasado a `efectuar/ejecutar` es siempre, sin excepción, ejecutado por este actor sin envoltura `try..catch`. Esto es parte del contrato de este trait.
+ * @define DoSiThEx DoSiThEx (doer's single-thread executor)
+ * @define onCompleteExecutedByDoSiThEx The `onComplete` callback passed to `engage` is always, with no exception, executed by this $DoSiThEx. This is part of the contract of the [[Task]] trait.
  * @define threadSafe This method is thread-safe.
- * @define isExecutedByDoSiThEx Executed within the DoSiThEx (domain's single-thread executor).
+ * @define isExecutedByDoSiThEx Executed within the DoSiThEx (doer's single-thread executor).
  * @define unhandledErrorsArePropagatedToTaskResult The call to this function is guarded with try-catch. If it throws a non-fatal exception it will be caught and the [[Task]] will complete with a [[Failure]] containing the error.
- * @define unhandledErrorsAreReported The call to this function is guarded with a try-catch. If it throws a non-fatal exception it will be caught and reported with [[TaskDomain.Assistant.reportFailure()]].
+ * @define unhandledErrorsAreReported The call to this function is guarded with a try-catch. If it throws a non-fatal exception it will be caught and reported with [[Doer.Assistant.reportFailure()]].
  * @define isNotGuarded This function call is not guarded with try-catch. Only transformations that meant to be executed in the DoSiThEx are guarded.
  * @define maxRecursionDepthPerExecutor Maximum recursion depth per executor. Once this limit is reached, the recursion continues in a new executor. The result does not depend on this parameter as long as no [[StackOverflowError]] occurs.
  * @define isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, the caller should set this parameter to `false` (or don't specify a value). This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously. This method is thread-safe when this parameter value is false.
  */
-trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
+trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 
 	/**
-	 * Queues the execution of the received [[Runnable]] in this $DoSiThEx. See [[TaskDomain.Assistant.queueForSequentialExecution]]
+	 * Queues the execution of the received [[Runnable]] in this $DoSiThEx. See [[Doer.Assistant.queueForSequentialExecution]]
 	 * If the call is executed by the DoSiThEx the [[Runnable]]'s execution will not start until the DoSiThEx completes its current execution and gets free to start a new one.
 	 *
 	 * All the deferred actions preformed by the [[Task]] operations are executed by calling this method unless the particular operation documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive as.
@@ -64,18 +64,18 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 	 * Is more efficient than the functionally equivalent: {{{ Task.mine(runnable.run).attemptAndForget(); }}}.
 	 */
 	inline def queueForSequentialExecution(inline procedure: => Unit): Unit = {
-		${ TaskDomainMacros.queueForSequentialExecutionImpl('assistant, 'procedure) }
+		${ DoerMacros.queueForSequentialExecutionImpl('assistant, 'procedure) }
 	}
 
 	inline def reportFailure(cause: Throwable): Unit =
-		${ TaskDomainMacros.reportFailureImpl('assistant, 'cause) }
+		${ DoerMacros.reportFailureImpl('assistant, 'cause) }
 
 	/**
-	 * An [[ExecutionContext]] that uses the $DoSiThEx. See [[TaskDomain.assistant.queueForSequentialExecution]] */
+	 * An [[ExecutionContext]] that uses the $DoSiThEx. See [[Doer.assistant.queueForSequentialExecution]] */
 	object ownSingleThreadExecutionContext extends ExecutionContext {
 		def execute(runnable: Runnable): Unit = queueForSequentialExecution(runnable.run())
 
-		def reportFailure(cause: Throwable): Unit = thisTaskDomain.reportFailure(cause)
+		def reportFailure(cause: Throwable): Unit = thisDoer.reportFailure(cause)
 	}
 
 	/**
@@ -91,7 +91,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 	 * This does not mean that [[Task]] implementations must avoid closing over mutable variables altogether. Rather, it highlights that if strict adherence to monadic laws is required by your business logic, you should ensure that the mutable variable is not modified during task execution.
 	 * For deterministic behavior, it's sufficient that any closed-over mutable variable is only mutated and accessed by actions executed in sequence. This is why the contract centralizes execution in the $DoSiThEx: to maintain determinism, even when closing over mutable variables, provided they are mutated solely within the $DoSiThEx.
 	 *
-	 * Design note: [[Task]] is a member of [[TaskDomain]] to ensure that access to [[Task]] instances is restricted to the section of code where the owning [[TaskDomain]] is exposed.
+	 * Design note: [[Task]] is a member of [[Doer]] to ensure that access to [[Task]] instances is restricted to the section of code where the owning [[Doer]] is exposed.
 	 *
 	 * @tparam A the type of result obtained when executing this task.
 	 */
@@ -118,12 +118,8 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 */
 		protected def engage(onComplete: Try[A] => Unit): Unit;
 
-		/** A bridge to access the [[engage]] from macros in [[TaskDomainMacros]]. */
+		/** A bridge to access the [[engage]] from macros in [[DoerMacros]]. */
 		private[taskflow] inline def engageBridge(onComplete: Try[A] => Unit): Unit = engage(onComplete)
-
-//		inline def attempt2(inline isRunningInDoSiThEx: Boolean = false)(onComplete: Try[A] => Unit): Unit = {
-//			${ TaskDomainMacros.attemptImpl(isRunningInDoSiThEx, 'assistant, thisTaskDomain, 'thisTask, 'onComplete) }
-//		}
 
 		/**
 		 * Trigger the execution of this [[Task]].
@@ -134,7 +130,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 * $isExecutedByDoSiThEx
 		 */
 		inline def attempt(inline isRunningInDoSiThEx: Boolean = false)(inline onComplete: Try[A] => Unit): Unit = {
-			${ TaskDomainMacros.attemptImpl('isRunningInDoSiThEx, 'assistant, 'thisTask, 'onComplete)}
+			${ DoerMacros.attemptImpl('isRunningInDoSiThEx, 'assistant, 'thisTask, 'onComplete)}
 		}
 
 		/** Triggers the execution of this [[Task]] and returns a [[Future]] of its result.
@@ -305,7 +301,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		 *		- first executes this task;
 		 *		- second applies the received function to the result and, if the evaluation finishes:
 		 *			- normally, completes with the result of this task.
-		 *			- abruptly with a non-fatal exception, reports the failure cause to [[TaskDomain.Assistant.reportFailure]] and completes with the result of this task.
+		 *			- abruptly with a non-fatal exception, reports the failure cause to [[Doer.Assistant.reportFailure]] and completes with the result of this task.
 		 *			- abruptly with a fatal exception, never completes.
 		 *
 		 * $threadSafe
@@ -462,29 +458,29 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		}
 
 		/**
-		 * Wraps this task into another that belongs to other [[TaskDomain]].
-		 * Useful to chain [[Task]]'s operations that involve different [[TaskDomain]]s.
+		 * Wraps this task into another that belongs to other [[Doer]].
+		 * Useful to chain [[Task]]'s operations that involve different [[Doer]]s.
 		 * ===Detailed behavior===
-		 * Returns a task that, when executed, it will execute this task within this [[TaskDomain]]'s $DoSiThEx and complete with the same result.
-		 * CAUTION: Avoid closing over the same mutable variable from two transformations applied to Task instances belonging to different [[TaskDomain]]s.
-		 * Remember that all routines (e.g., functions, procedures, predicates, and callbacks) provided to [[Task]] methods are executed by the $DoSiThEx of the [[TaskDomain]] that owns the [[Task]] instance on which the method is called.
-		 * Therefore, calling [[attempt]] on the returned task will execute the `onComplete` passed to it within the $DoSiThEx of the `otherTaskDomain`.
+		 * Returns a task that, when executed, it will execute this task within this [[Doer]]'s $DoSiThEx and complete with the same result.
+		 * CAUTION: Avoid closing over the same mutable variable from two transformations applied to Task instances belonging to different [[Doer]]s.
+		 * Remember that all routines (e.g., functions, procedures, predicates, and callbacks) provided to [[Task]] methods are executed by the $DoSiThEx of the [[Doer]] that owns the [[Task]] instance on which the method is called.
+		 * Therefore, calling [[attempt]] on the returned task will execute the `onComplete` passed to it within the $DoSiThEx of the `otherDoer`.
 		 *
 		 * $threadSafe
 		 *
-		 * @param otherTaskDomain the [[TaskDomain]] to which the returned task will belong.
+		 * @param otherDoer the [[Doer]] to which the returned task will belong.
 		 * */
-		inline def onBehalfOf(otherTaskDomain: TaskDomain): otherTaskDomain.Task[A] =
-			otherTaskDomain.Task.foreign(thisTaskDomain)(this)
+		inline def onBehalfOf(otherDoer: Doer): otherDoer.Task[A] =
+			otherDoer.Task.foreign(thisDoer)(this)
 
-		/** Casts the type-path of this [[Task]] to the received [[TaskDomain]]. Usar con cautela.
+		/** Casts the type-path of this [[Task]] to the received [[Doer]]. Usar con cautela.
 		 * Esta operación no hace nada en tiempo de ejecución. Solo engaña al compilador para evitar que chille cuando se opera con [[Task]]s que tienen distinto type-path pero se sabe que corresponden al mismo actor ejecutor.
 		 * Se decidió hacer que [[Task]] sea un inner class del actor ejecutor para detectar en tiempo de compilación cuando se usa una instancia fuera de dicho actor.
 		 * Usar el type-path checking para detectar en tiempo de compilación cuando una [[Task]] está siendo usada fuera del actor ejecutor es muy valioso, pero tiene un costo: El chequeo de type-path es más estricto de lo necesario para este propósito y, por ende, el compilador reportará errores de tipo en situaciones donde se sabe que el actor ejecutor es el correcto. Esta operación ([[castTypePath()]]) está para tratar esos casos.
 		 */
-		def castTypePath[E <: TaskDomain](taskDomain: E): taskDomain.Task[A] = {
-			assert(thisTaskDomain eq taskDomain);
-			this.asInstanceOf[taskDomain.Task[A]]
+		def castTypePath[E <: Doer](doer: E): doer.Task[A] = {
+			assert(thisDoer eq doer);
+			this.asInstanceOf[doer.Task[A]]
 		}
 	}
 
@@ -575,14 +571,14 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		inline def alien[A](futureBuilder: () => Future[A]): Task[A] = new Alien(futureBuilder);
 
         /**
-		 * Creates a [[Task]] that, when executed, triggers the execution of a task that belongs to another [[TaskDomain]] within that [[TaskDomain]]'s $DoSiThEx.
+		 * Creates a [[Task]] that, when executed, triggers the execution of a task that belongs to another [[Doer]] within that [[Doer]]'s $DoSiThEx.
 		 * $threadSafe
 		 *
-		 * @param foreignTaskDomain the [[TaskDomain]] to whom the `foreignTask` belongs.
-		 * @return a task that belongs to this [[TaskDomain]] */
-		inline def foreign[A](foreignTaskDomain: TaskDomain)(foreignTask: foreignTaskDomain.Task[A]): Task[A] = {
-			if foreignTaskDomain eq thisTaskDomain then foreignTask.asInstanceOf[thisTaskDomain.Task[A]]
-			else new Foreign(foreignTaskDomain)(foreignTask)
+		 * @param foreignDoer the [[Doer]] to whom the `foreignTask` belongs.
+		 * @return a task that belongs to this [[Doer]] */
+		inline def foreign[A](foreignDoer: Doer)(foreignTask: foreignDoer.Task[A]): Task[A] = {
+			if foreignDoer eq thisDoer then foreignTask.asInstanceOf[thisDoer.Task[A]]
+			else new Foreign(foreignDoer)(foreignTask)
 		}
 
 		/**
@@ -852,7 +848,7 @@ trait TaskDomain(assistant: TaskDomain.Assistant) { thisTaskDomain =>
 		override def toString: String = deriveToString[Alien[A]](this)
 	}
 
-	final class Foreign[+A](foreignTaskDomain: TaskDomain)(foreignTask: foreignTaskDomain.Task[A]) extends Task[A] {
+	final class Foreign[+A](foreignDoer: Doer)(foreignTask: foreignDoer.Task[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit = {
 			foreignTask.attempt() { tryA => queueForSequentialExecution(onComplete(tryA)) }
 		}

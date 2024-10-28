@@ -21,7 +21,7 @@ object Test {
 
 			def apply: Behavior[Pregunta] = {
 				Behaviors.setup { actorContext =>
-					ActorTaskDomain.setup(actorContext) { taskContext =>
+					ActorBasedDoer.setup(actorContext) { taskContext =>
 						Behaviors.receiveMessage { pregunta =>
 							taskContext.Task.successful(Respuesta(actorContext.self, "Hola")).attemptAndSend(pregunta.replyTo, true)
 
