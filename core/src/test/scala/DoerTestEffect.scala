@@ -168,9 +168,9 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					}
 					// repeat the previous until the exception is found among the unhandled exceptions but no more than 99 times.
 					.repeatedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
-						if theExceptionWasFoundAmongTheUnhandledOnes then Some(Success(true))
-						else if tries > 99 then Some(Success(false))
-						else None
+						if theExceptionWasFoundAmongTheUnhandledOnes then Maybe.some(Success(true))
+						else if tries > 99 then Maybe.some(Success(false))
+						else Maybe.empty
 					}.toFuture()
 
 				// Depending on the kind of exception, fatal or not, the check is very different.
@@ -222,7 +222,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				repeatedHardyUntilSomeTestResult <- check(_.repeatedHardyUntilSome()(f2))
 				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome()(f2))
 				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined()(f2))
-				repeatedWhileNoneTestResult <- check(_.repeatedWhileNone(Success(0))(f2))
+				repeatedWhileNoneTestResult <- check(_.repeatedWhileEmpty(Success(0))(f2))
 				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0))(f2))
 				ownTestResult <- check(_.flatMap(_ => Task.own(() => throw exception)))
 				alienTestResult <- check(_.flatMap(_ => Task.alien(() => throw exception)))
@@ -282,15 +282,15 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					.repeatedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
 						if theExceptionWasFoundAmongTheUnhandledOnes then {
 							// println(s"The exception was found among the unhandled or reported exceptions")
-							Some(Success(true))
+							Maybe.some(Success(true))
 						}
 						else if tries > 99 then {
 							// println(s"The exception was NOT found among the unhandled/reported exceptions after $tries retries. Waiting aborted.")
-							Some(Success(false))
+							Maybe.some(Success(false))
 						}
 						else {
 							// println(s"The exception was NOT found among the unhandled/reported exceptions after $tries retries. Wait more time.")
-							None
+							Maybe.empty
 						}
 					}.toFuture()
 			}
@@ -311,10 +311,10 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				transformWithTestResult <- check(_.transformWith(_ => task))
 				recoverTestResult <- check(_.recover { case x if randomBool => randomInt })
 				recoverWithTestResult <- check(_.recoverWith { case x if randomBool => task })
-				repeatedHardyUntilSomeTestResult <- check(_.repeatedHardyUntilSome() { (n, tryInt) => if n > smallNonNegativeInt then Some(randomTryInt) else None })
-				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome() { (n, i) => if n > smallNonNegativeInt then Some(randomTryInt) else None })
+				repeatedHardyUntilSomeTestResult <- check(_.repeatedHardyUntilSome() { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
+				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome() { (n, i) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
 				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined() { case (n, tryInt) if n > smallNonNegativeInt => tryInt })
-				repeatedWhileNoneTestResult <- check(_.repeatedWhileNone(Success(0)) { (n, tryInt) => if n > smallNonNegativeInt then Some(randomTryInt) else None })
+				repeatedWhileNoneTestResult <- check(_.repeatedWhileEmpty(Success(0)) { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
 				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0)) { case (n, tryInt) if n > smallNonNegativeInt => randomInt })
 			} yield
 				assert(
