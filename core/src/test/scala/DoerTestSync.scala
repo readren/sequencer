@@ -39,7 +39,7 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 	private def checkEquality[A](task1: Task[A], task2: Task[A]): Unit = {
 		combine(task1, task2) {
 			(a1, a2) => Success((a1, a2))
-		}.attempt(true) {
+		}.trigger(true) {
 			case Success(z) => assert(z._1 ==== z._2)
 			case Failure(cause) => throw cause
 		}
@@ -124,8 +124,8 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 				val left: Task[(Try[Int], Try[Int])] = combine(taskA, taskB)(zip)
 				val right: Task[(Try[Int], Try[Int])] = own(() => zip(tryA, tryB))
 
-				left.attempt() { resultLeft =>
-					right.attempt(true) { resultRight =>
+				left.trigger() { resultLeft =>
+					right.trigger(true) { resultRight =>
 						println(s"3) resultLeft = $resultLeft, resultRight = $resultRight")
 						(resultLeft, resultRight) match {
 							case (Success(a), Success(b)) => assert(a._1 ==== b._1)
@@ -142,44 +142,44 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 			val combined = combine(taskA, taskB)(f)
 
 			// do the check in all possible triggering orders
-			combined.attempt() { combinedResult =>
-				taskA.attempt(true) { taskAResult =>
-					taskB.attempt(true) { taskBResult =>
+			combined.trigger() { combinedResult =>
+				taskA.trigger(true) { taskAResult =>
+					taskB.trigger(true) { taskBResult =>
 						assert(combinedResult ==== f(taskAResult, taskBResult))
 					}
 				}
 			}
-			combined.attempt() { combinedResult =>
-				taskB.attempt(true) { taskBResult =>
-					taskA.attempt(true) { taskAResult =>
+			combined.trigger() { combinedResult =>
+				taskB.trigger(true) { taskBResult =>
+					taskA.trigger(true) { taskAResult =>
 						assert(combinedResult ==== f(taskAResult, taskBResult))
 					}
 				}
 			}
-			taskA.attempt() { taskAResult =>
-				combined.attempt(true) { combinedResult =>
-					taskB.attempt(true) { taskBResult =>
+			taskA.trigger() { taskAResult =>
+				combined.trigger(true) { combinedResult =>
+					taskB.trigger(true) { taskBResult =>
 						assert(combinedResult ==== f(taskAResult, taskBResult))
 					}
 				}
 			}
-			taskA.attempt() { taskAResult =>
-				taskB.attempt(true) { taskBResult =>
-					combined.attempt(true) { combinedResult =>
+			taskA.trigger() { taskAResult =>
+				taskB.trigger(true) { taskBResult =>
+					combined.trigger(true) { combinedResult =>
 						assert(combinedResult ==== f(taskAResult, taskBResult))
 					}
 				}
 			}
-			taskB.attempt() { taskBResult =>
-				combined.attempt(true) { combinedResult =>
-					taskA.attempt(true) { taskAResult =>
+			taskB.trigger() { taskBResult =>
+				combined.trigger(true) { combinedResult =>
+					taskA.trigger(true) { taskAResult =>
 						assert(combinedResult ==== f(taskAResult, taskBResult))
 					}
 				}
 			}
-			taskB.attempt() { taskBResult =>
-				taskA.attempt(true) { taskAResult =>
-					combined.attempt(true) { combinedResult =>
+			taskB.trigger() { taskBResult =>
+				taskA.trigger(true) { taskAResult =>
+					combined.trigger(true) { combinedResult =>
 						assert(combinedResult ==== f(taskAResult, taskBResult))
 					}
 				}

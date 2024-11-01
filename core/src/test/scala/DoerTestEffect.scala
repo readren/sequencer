@@ -41,14 +41,14 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						// println(s"queuedForSequentialExecution: run completed abruptly with: $cause; id=$id; thread=${Thread.currentThread().getName}")
 						unhandledExceptions.addOne(cause.getMessage);
 						throw cause;
-					//				} finally {
-					//					println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
+				} finally {
+					// println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
 				}
 			})
 		}
 
 		override def reportFailure(failure: Throwable): Unit = {
-			println(s"Reporting failure to munit: ${failure.getMessage}")
+			// println(s"Reporting failure to munit: ${failure.getMessage}")
 			munitExecutionContext.reportFailure(failure)
 			doSiThEx.execute { () =>
 				val exceptionToReport = if failure.isInstanceOf[ExceptionReport] then failure.getCause else failure
@@ -65,6 +65,74 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	private val shared = new DoerTestShared[doer.type](doer)
 	import shared.{*, given}
 
+	////////// DUTY //////////
+
+	// Custom equality for Duty based on the result
+	private def checkEquality[A](duty1: Duty[A], duty2: Duty[A]): Future[Unit] = {
+		// println(s"Begin: duty1=$duty1, duty2=$duty2")
+		val futureEquality = for {
+			a1 <- duty1.toFutureHardy()
+			a2 <- duty2.toFutureHardy()
+		} yield {
+			// println(s"$try1 ==== $try2")
+			a1 == a2
+		}
+		futureEquality.map(assert(_))
+	}
+	
+	// Monadic left identity law: Duty.ready(x).flatMap(f) == f(x)
+	test("Duty: left identity") {
+		PropF.forAllF { (x: Int, f: Int => Duty[Int]) =>
+			val left = Duty.ready(x).flatMap(f)
+			val right = f(x)
+			checkEquality(left, right)
+		}
+	}
+
+	// Monadic right identity law: m.flatMap(Duty.ready) == m
+	test("Duty: right identity") {
+		PropF.forAllF { (m: Duty[Int]) =>
+			val left = m.flatMap(Duty.ready)
+			val right = m
+			checkEquality(left, right)
+		}
+	}
+
+	// Monadic associativity law: m.flatMap(f).flatMap(g) == m.flatMap(x => f(x).flatMap(g))
+	test("Duty: associativity") {
+		PropF.forAllF { (m: Duty[Int], f: Int => Duty[Int], g: Int => Duty[Int]) =>
+			val leftAssoc = m.flatMap(f).flatMap(g)
+			val rightAssoc = m.flatMap(x => f(x).flatMap(g))
+			checkEquality(leftAssoc, rightAssoc)
+		}
+	}
+
+	// Functor: `m.map(f) == m.flatMap(a => ready(f(a)))`
+	test("Duty: can be transformed with map") {
+		PropF.forAllF { (m: Duty[Int], f: Int => String) =>
+			val left = m.map(f)
+			val right = m.flatMap(a => Duty.ready(f(a)))
+			checkEquality(left, right)
+		}
+	}
+
+	test("Duty: any can be combined") {
+		PropF.forAllF { (dutyA: Duty[Int], dutyB: Duty[Int], f: (Int, Int) => Int) =>
+			val combinedDuty = Duty.combine(dutyA, dutyB)(f)
+
+			for {
+				combinedResult <- combinedDuty.toFutureHardy()
+				dutyAResult <- dutyA.toFutureHardy()
+				dutyBResult <- dutyB.toFutureHardy()
+			} yield {
+				assert(combinedResult == f(dutyAResult, dutyBResult))
+			}
+		}
+	}
+	
+	
+	////////// TASK /////////////
+
 	// Custom equality for Task based on the result of attempt
 	private def checkEquality[A](task1: Task[A], task2: Task[A]): Future[Unit] = {
 		val futureEquality = for {
@@ -77,12 +145,13 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 		futureEquality.map(assert(_))
 	}
 
-	private def evalNow[A](task: Task[A]): Try[A] = {
-		Await.result(task.toFutureHardy(), new FiniteDuration(1, TimeUnit.MINUTES))
-	}
-
+//	private def evalNow[A](task: Task[A]): Try[A] = {
+//		Await.result(task.toFutureHardy(), new FiniteDuration(1, TimeUnit.MINUTES))
+//	}
+	
+	
 	// Monadic left identity law: Task.successful(x).flatMap(f) == f(x)
-	test("left identity") {
+	test("Task: left identity") {
 		PropF.forAllF { (x: Int, f: Int => Task[Int]) =>
 			val sx = Task.successful(x)
 			val left = Task.successful(x).flatMap(f)
@@ -92,7 +161,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	}
 
 	// Monadic right identity law: m.flatMap(Task.successful) == m
-	test("right identity") {
+	test("Task: right identity") {
 		PropF.forAllF { (m: Task[Int]) =>
 			val left = m.flatMap(Task.successful)
 			val right = m
@@ -101,7 +170,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	}
 
 	// Monadic associativity law: m.flatMap(f).flatMap(g) == m.flatMap(x => f(x).flatMap(g))
-	test("associativity") {
+	test("Task: associativity") {
 		PropF.forAllF { (m: Task[Int], f: Int => Task[Int], g: Int => Task[Int]) =>
 			val leftAssoc = m.flatMap(f).flatMap(g)
 			val rightAssoc = m.flatMap(x => f(x).flatMap(g))
@@ -110,7 +179,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	}
 
 	// Functor: `m.map(f) == m.flatMap(a => unit(f(a)))`
-	test("Task can be transformed with map") {
+	test("Task: can be transformed with map") {
 		PropF.forAllF { (m: Task[Int], f: Int => String) =>
 			val left = m.map(f)
 			val right = m.flatMap(a => Task.successful(f(a)))
@@ -119,7 +188,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	}
 
 	// Recovery: `failedTask.recover(f) == if f.isDefinedAt(e) then successful(f(e)) else failed(e)` where e is the exception thrown by failedTask
-	test("Task can be recovered from failure") {
+	test("Task: can be recovered from failure") {
 		PropF.forAllF { (e: Throwable, f: PartialFunction[Throwable, Int]) =>
 			if NonFatal(e) then {
 				val leftTask = Task.failed[Int](e).recover(f)
@@ -129,7 +198,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 		}
 	}
 
-	test("Any tasks can be combined") {
+	test("Task: any can be combined") {
 		PropF.forAllF { (taskA: Task[Int], taskB: Task[Int], f: (Try[Int], Try[Int]) => Try[Int]) =>
 			val combinedTask = Task.combine(taskA, taskB)(f)
 
@@ -150,7 +219,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	}
 
 
-	test("if a transformation throws an exception the task should complete with that exception if it is non-fatal, or never complete if it is fatal.") {
+	test("if a Task's transformation throws an exception the task should complete with that exception if it is non-fatal, or never complete if it is fatal.") {
 		PropF.forAllF { (task: Task[Int], exception: Throwable) =>
 
 			/** Do the test for a single operation */
@@ -167,7 +236,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						Task.mine { () => unhandledExceptions.remove(exception.getMessage) }
 					}
 					// repeat the previous until the exception is found among the unhandled exceptions but no more than 99 times.
-					.repeatedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
+					.reiteratedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
 						if theExceptionWasFoundAmongTheUnhandledOnes then Maybe.some(Success(true))
 						else if tries > 99 then Maybe.some(Success(false))
 						else Maybe.empty
@@ -208,7 +277,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 
 			def f2[A, B, C](a: A, b: B): C = throw exception
 
-			println(s"Begin: task=$task, exception=$exception")
+			// println(s"Begin: task=$task, exception=$exception")
 
 			for {
 				foreachTestResult <- check(_.foreach(_ => throw exception).map(_ => 0))
@@ -219,11 +288,11 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				transformWithTestResult <- check(_.transformWith(f1))
 				recoverTestResult <- check(_.transform { _ => Failure(new Exception("for recover")) }.recover(f1))
 				recoverWithTestResult <- check(_.transform { _ => Failure(new Exception("for recoverWith")) }.recoverWith(f1))
-				repeatedHardyUntilSomeTestResult <- check(_.repeatedHardyUntilSome()(f2))
-				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome()(f2))
-				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined()(f2))
-				repeatedWhileNoneTestResult <- check(_.repeatedWhileEmpty(Success(0))(f2))
-				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0))(f2))
+				repeatedHardyUntilSomeTestResult <- check(_.reiteratedHardyUntilSome()(f2))
+				repeatedUntilSomeTestResult <- check(_.reiteratedUntilSome()(f2))
+				repeatedUntilDefinedTestResult <- check(_.reiteratedHardyUntilDefined()(f2))
+				repeatedWhileNoneTestResult <- check(_.reiteratedWhileEmpty(Success(0))(f2))
+				repeatedWhileUndefinedTestResult <- check(_.reiteratedWhileUndefined(Success(0))(f2))
 				ownTestResult <- check(_.flatMap(_ => Task.own(() => throw exception)))
 				alienTestResult <- check(_.flatMap(_ => Task.alien(() => throw exception)))
 			} yield
@@ -264,13 +333,13 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 		}
 	}
 
-	test("engage should either report or not catch exceptions thrown by onComplete") {
+	test("`Task.engage` should either report or not catch exceptions thrown by `onComplete`") {
 		PropF.forAllF { (task: Task[Int], exception: Throwable) =>
 
 			/** Do the test for a single operation */
 			def check[R](operation: Task[Int] => Task[R]): Future[Boolean] = {
 				// Apply the operation to the random task and trigger the execution passing a faulty on-complete callback.
-				operation(task).attempt()(tryR => throw exception)
+				operation(task).trigger()(tryR => throw exception)
 
 				// Build and execute a task that completes with `true` as soon as the `exception` is found among the unhandled exceptions logged in the `unhandledExceptions` set; or `false` if it isn't found after 99 milliseconds.
 				sleep1ms
@@ -279,7 +348,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						Task.mine { () => unhandledExceptions.remove(exception.getMessage) || reportedExceptions.remove(exception.getMessage) }
 					}
 					// repeat the previous until the exception is found among the unhandled exceptions but no more than 99 times.
-					.repeatedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
+					.reiteratedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
 						if theExceptionWasFoundAmongTheUnhandledOnes then {
 							// println(s"The exception was found among the unhandled or reported exceptions")
 							Maybe.some(Success(true))
@@ -307,15 +376,16 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				mapTestResult <- check(_.map(identity))
 				flatMapTestResult <- check(_.flatMap(_ => task))
 				withFilterTestResult <- check(_.withFilter(_ => randomBool))
+				consumeTestResult <- check(_.consume(tryInt => ()))
 				transformTestResult <- check(_.transform(identity))
 				transformWithTestResult <- check(_.transformWith(_ => task))
 				recoverTestResult <- check(_.recover { case x if randomBool => randomInt })
 				recoverWithTestResult <- check(_.recoverWith { case x if randomBool => task })
-				repeatedHardyUntilSomeTestResult <- check(_.repeatedHardyUntilSome() { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
-				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome() { (n, i) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
-				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined() { case (n, tryInt) if n > smallNonNegativeInt => tryInt })
-				repeatedWhileNoneTestResult <- check(_.repeatedWhileEmpty(Success(0)) { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
-				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0)) { case (n, tryInt) if n > smallNonNegativeInt => randomInt })
+				repeatedHardyUntilSomeTestResult <- check(_.reiteratedHardyUntilSome() { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
+				repeatedUntilSomeTestResult <- check(_.reiteratedUntilSome() { (n, i) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
+				repeatedUntilDefinedTestResult <- check(_.reiteratedHardyUntilDefined() { case (n, tryInt) if n > smallNonNegativeInt => tryInt })
+				repeatedWhileNoneTestResult <- check(_.reiteratedWhileEmpty(Success(0)) { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomTryInt) else Maybe.empty })
+				repeatedWhileUndefinedTestResult <- check(_.reiteratedWhileUndefined(Success(0)) { case (n, tryInt) if n > smallNonNegativeInt => randomInt })
 			} yield
 				assert(
 					factoryTestResult
@@ -323,6 +393,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						&& mapTestResult
 						&& flatMapTestResult
 						&& withFilterTestResult
+						&& consumeTestResult
 						&& transformTestResult
 						&& transformWithTestResult
 						&& recoverTestResult
@@ -338,6 +409,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					   |map: $mapTestResult
 					   |flatMap: $flatMapTestResult
 					   |withFilter: $withFilterTestResult
+					   |consume: $consumeTestResult
 					   |transform: $transformTestResult
 					   |transformWith: $transformWithTestResult
 					   |recover: $recoverTestResult
@@ -348,6 +420,74 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					   |repeatedWhileNone: $repeatedWhileNoneTestResult
 					   |repeatedWhileUndefined: $repeatedWhileUndefinedTestResult
 				""".stripMargin
+				)
+		}
+	}
+
+	test("`Duty.engage` should either report or not catch exceptions thrown by `onComplete`") {
+		PropF.forAllF { (duty: Duty[Int], exception: Throwable) =>
+
+			/** Do the test for a single operation */
+			def check[R](operation: Duty[Int] => Duty[R]): Future[Boolean] = {
+				// Apply the operation to the random duty and trigger the execution passing a faulty on-complete callback.
+				operation(duty).trigger()(r => throw exception)
+
+				// Build and execute a duty that completes with `true` as soon as the `exception` is found among the unhandled exceptions logged in the `unhandledExceptions` set; or `false` if it isn't found after 99 milliseconds.
+				sleep1ms
+					// Check if the exception was reported or unhandled
+					.flatMap { _ =>
+						Task.mine { () => unhandledExceptions.remove(exception.getMessage) || reportedExceptions.remove(exception.getMessage) }
+					}
+					// repeat the previous until the exception is found among the unhandled exceptions but no more than 99 times.
+					.reiteratedUntilSome() { (tries, theExceptionWasFoundAmongTheUnhandledOnes) =>
+						if theExceptionWasFoundAmongTheUnhandledOnes then {
+							// println(s"The exception was found among the unhandled or reported exceptions")
+							Maybe.some(Success(true))
+						}
+						else if tries > 99 then {
+							// println(s"The exception was NOT found among the unhandled/reported exceptions after $tries retries. Waiting aborted.")
+							Maybe.some(Success(false))
+						}
+						else {
+							// println(s"The exception was NOT found among the unhandled/reported exceptions after $tries retries. Wait more time.")
+							Maybe.empty
+						}
+					}.toFuture()
+			}
+
+			val randomInt = exception.getMessage.hashCode()
+			val smallNonNegativeInt = randomInt % 9
+			// println(s"Begin: duty=$duty, exception=$exception")
+
+			for {
+				factoryTestResult <- check(identity)
+				foreachTestResult <- check(_.foreach(_ => ()))
+				mapTestResult <- check(_.map(identity))
+				flatMapTestResult <- check(_.flatMap(_ => duty))
+				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome() { (n, i) => if n > smallNonNegativeInt then Maybe.some(randomInt) else Maybe.empty })
+				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined() { case (n, tryInt) if n > smallNonNegativeInt => tryInt })
+				repeatedWhileNoneTestResult <- check(_.repeatedWhileEmpty(Success(0)) { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomInt) else Maybe.empty })
+				repeatedWhileUndefinedTestResult <- check(_.repeatedWhileUndefined(Success(0)) { case (n, tryInt) if n > smallNonNegativeInt => randomInt })
+			} yield
+				assert(
+					factoryTestResult
+						&& foreachTestResult
+						&& mapTestResult
+						&& flatMapTestResult
+						&& repeatedUntilSomeTestResult
+						&& repeatedUntilDefinedTestResult
+						&& repeatedWhileNoneTestResult
+						&& repeatedWhileUndefinedTestResult,
+					s"""
+					   |factory: $factoryTestResult
+					   |foreach: $foreachTestResult
+					   |map: $mapTestResult
+					   |flatMap: $flatMapTestResult
+					   |repeatedUntilSome: $repeatedUntilSomeTestResult
+					   |repeatedUntilDefined: $repeatedUntilDefinedTestResult
+					   |repeatedWhileNone: $repeatedWhileNoneTestResult
+					   |repeatedWhileUndefined: $repeatedWhileUndefinedTestResult
+					   |""".stripMargin
 				)
 		}
 	}

@@ -117,7 +117,7 @@ object Prueba {
 							case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.query[Pregunta](ref => Respuesta(ref, "Hola también"))
 							_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
 						} yield ()
-						task.attempt(true) { x => ctx.log.info(s"resultado final: $x") }
+						task.trigger(true) { x => ctx.log.info(s"resultado final: $x") }
 						Behaviors.same
 				}
 			}
@@ -129,7 +129,7 @@ object Prueba {
 			ActorBasedDoer.setup[Pregunta](ctx) { taskContext =>
 				import taskContext.*
 
-				val flow = Flow.wrap[ActorRef[Respuesta], Unit] { replyTo1 =>
+				val flow = Flow.wrap[ActorRef[Respuesta], Try[Unit]] { replyTo1 =>
 					for {
 						case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.query[Pregunta](ref => Respuesta(ref, "Hola también"))
 						_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
@@ -155,7 +155,7 @@ object Prueba {
 							_ <- Task.mine(() => ctx.log.info("sigue funcionando"))
 							_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
 						} yield ()
-						task.attempt(true)(rf => ctx.log.info(s"resultado final: $rf"))
+						task.trigger(true)(rf => ctx.log.info(s"resultado final: $rf"))
 						Behaviors.same
 				}
 

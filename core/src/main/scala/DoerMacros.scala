@@ -8,7 +8,7 @@ import scala.util.Try
 object DoerMacros {
 
 
-	def attemptImpl[A: Type](isRunningInDoSiThExExpr: Expr[Boolean], assistantExpr: Expr[Doer.Assistant], taskExpr: Expr[Doer#Task[A]], onCompleteExpr: Expr[Try[A] => Unit])(using quotes: Quotes): Expr[Unit] = {
+	def triggerImpl[A: Type](isRunningInDoSiThExExpr: Expr[Boolean], assistantExpr: Expr[Doer.Assistant], dutyExpr: Expr[Doer#Duty[A]], onCompleteExpr: Expr[A => Unit])(using quotes: Quotes): Expr[Unit] = {
 		import quotes.reflect.*
 
 		def runnable: Expr[Runnable] = {
@@ -17,26 +17,26 @@ object DoerMacros {
 
 			'{
 				new Runnable {
-					override def run(): Unit = $taskExpr.engageBridge($onCompleteExpr)
+					override def run(): Unit = $dutyExpr.engagePortal($onCompleteExpr)
 
-					override def toString: String = s"{ ${$taskExpr.toString}${$sourceInfo}"
+					override def toString: String = s"{ ${$dutyExpr.toString}${$sourceInfo}"
 				}
 			}
 		}
 
 		isRunningInDoSiThExExpr.value match {
 			case Some(isRunningInDoSiThEx) =>
-				if isRunningInDoSiThEx then '{ $taskExpr.engageBridge($onCompleteExpr) }
+				if isRunningInDoSiThEx then '{ $dutyExpr.engagePortal($onCompleteExpr) }
 				else '{ $assistantExpr.queueForSequentialExecution($runnable) }
 
 			case None =>
 				'{
-					if $isRunningInDoSiThExExpr then $taskExpr.engageBridge($onCompleteExpr)
+					if $isRunningInDoSiThExExpr then $dutyExpr.engagePortal($onCompleteExpr)
 					else $assistantExpr.queueForSequentialExecution($runnable)
 				}
 		}
 	}
-
+	
 	def queueForSequentialExecutionImpl(assistantExpr: Expr[Assistant], procedureExpr: Expr[Unit])(using quotes: Quotes): Expr[Unit] = {
 		import quotes.reflect.*
 

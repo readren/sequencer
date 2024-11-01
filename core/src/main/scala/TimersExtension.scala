@@ -38,7 +38,7 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: Doer =>
 		 * - se acaben los reintentos, en cuyo caso el resultado de la tarea bucle sería `None`.
 		 */
 		def reintentarSiTranscurreMargen[A](cantReintentos: Int, margen: FiniteDuration)(taskBuilder: Int => Task[Try[A]]): Task[Option[A]] = {
-			companion.retryUntilRight[Unit, A](cantReintentos) { attemptsAlreadyMade =>
+			companion.attemptUntilRight[Unit, A](cantReintentos) { attemptsAlreadyMade =>
 				taskBuilder(attemptsAlreadyMade).timed(margen).transform {
 
 					case Success(ota) => ota match {
@@ -92,7 +92,7 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: Doer =>
 			var hasElapsed = false;
 			var hasCompleted = false;
 			val timerId = genTimerId();
-			task.attempt(true) { tryA =>
+			task.trigger(true) { tryA =>
 				if (!hasElapsed) {
 					cancelDelayedExecution(timerId);
 					hasCompleted = true;
@@ -113,7 +113,7 @@ trait TimersExtension(assistant: TimersExtension.Assistant) { self: Doer =>
 		override def engage(onComplete: Try[Option[A]] => Unit): Unit = {
 
 			def loop(remainingExecutions: Int): Unit = {
-				task.attempt(true) {
+				task.trigger(true) {
 					case Success(Some(Success(a))) => onComplete(Success(Some(a)))
 					case Success(Some(Failure(e))) => onComplete(Failure(e))
 					case Success(None) =>

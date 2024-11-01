@@ -47,9 +47,21 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 			genA.toFutureBuilder(s"$failureLabel / FutureInstance").map(builder => builder())
 		}
 
+		def toDuty: Gen[Duty[A]] = {
+			val readyGen: Gen[Duty[A]] = genA.map(Duty.ready)
+
+			val ownGen: Gen[Duty[A]] = genA.map { a => Duty.mine(() => a) }
+			
+			val foreignGen: Gen[Duty[A]] = for {a <- genA; delay <- Gen.oneOf(0, 1, 2, 4, 8, 16)} yield
+				Task.alien(() => Future { Thread.sleep(delay); a }(ExecutionContext.global)).map(_.asInstanceOf[Success[A]].value)
+
+			if synchronousOnly then Gen.oneOf(readyGen, ownGen)
+			else Gen.oneOf(readyGen, ownGen, foreignGen)
+		}
+
 		def toTask(failureLabel: String): Gen[Task[A]] = {
 
-			val immediateGen: Gen[Task[A]] = genA.toTry(s"$failureLabel / Task.immediate").map(Task.immediate)
+			val immediateGen: Gen[Task[A]] = genA.toTry(s"$failureLabel / Task.immediate").map(Task.ready)
 
 			val ownGen: Gen[Task[A]] = genA.toTry(s"$failureLabel / Task.own").map { tryA => Task.own(() => tryA) }
 
@@ -75,6 +87,10 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 	given taskArbitrary[A](using arbA: Arbitrary[A]): Arbitrary[Task[A]] = Arbitrary {
 		arbA.arbitrary.toTask("taskArbitrary")
 	}
+	
+	given dutyArbitrary[A](using arbA: Arbitrary[A]): Arbitrary[Duty[A]] = Arbitrary {
+		arbA.arbitrary.toDuty
+	}
 
 	given intGen: Gen[Int] = Gen.choose(-10, 10)
 
@@ -92,11 +108,11 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 		}
 	}
 
-	extension [A](thisTask: Task[A]) {
-		def ====(otherTask: Task[A]): Task[Boolean] = {
-			Task.combine(thisTask, otherTask)((a, b) => Success(a ==== b))
-		}
-	}
+//	extension [A](thisTask: Task[A]) {
+//		def ====(otherTask: Task[A]): Task[Boolean] = {
+//			Task.combine(thisTask, otherTask)((a, b) => Success(a ==== b))
+//		}
+//	}
 
 	given throwableArbitrary: Arbitrary[Throwable] = Arbitrary {
 		for {

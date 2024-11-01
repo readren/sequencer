@@ -72,7 +72,7 @@ class ActorBasedDoer(assistant: ActorBasedDoer.Aide) extends Doer(assistant) {
 		 * @param errorHandler called if the execution of this task completed with failure.
 		 */
 		def attemptAndSend(destination: ActorRef[A], isRunningInDoSiThEx: Boolean = false)(errorHandler: Throwable => Unit): Unit = {
-			task.attempt(isRunningInDoSiThEx) {
+			task.trigger(isRunningInDoSiThEx) {
 				case Success(r) => destination ! r;
 				case Failure(e) => errorHandler(e)
 			}
