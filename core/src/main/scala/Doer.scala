@@ -162,9 +162,9 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 * $threadSafe
 		 * 
 		 * @param f a function that transforms the result of this task, when it is successful.
-		 *          
+		 *
 		 * $isExecutedByDoSiThEx
-		 *          
+		 *
 		 * $notGuarded
 		 */		
 		inline final def map[B](f: A => B): Duty[B] = new Map(thisDuty, f)
@@ -179,9 +179,9 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 * $threadSafe
 		 *
 		 * @param f a function that receives the result of this task and returns the task to be executed next.
-		 * 
+		 *
 		 * $isExecutedByDoSiThEx
-		 * 
+		 *
 		 * $notGuarded
 		 */
 		inline final def flatMap[B](f: A => Duty[B]): Duty[B] = new FlatMap(thisDuty, f)
@@ -201,7 +201,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 *
 		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
 		 * @return a [[Future]] that will be completed when this [[Task]] is completed.
-		 */		
+		 */
 		def toFutureHardy(isRunningInDoSiThEx: Boolean = false): Future[A] = {
 			val promise = Promise[A]()
 			trigger(isRunningInDoSiThEx)(a => promise.success(a))
@@ -703,6 +703,52 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		override def toString: String = deriveToString[RetryUntilRight[A, B]](this)
 	}
+
+	////////////// COVENANT ///////////////
+
+	/** A covenant to complete a [[Duty]].
+	 * [[Covenant]] is to [[Duty]] as [[Commitment]] is to [[Task]], and as [[scala.concurrent.Promise]] is to [[scala.concurrent.Future]]
+	 * */
+	final class Covenant[A] { thisCovenant =>
+		private var oResult: Maybe[A] = Maybe.empty;
+		private var onCompletedObservers: List[A => Unit] = Nil;
+
+		/** @return true if this [[Covenant]] was fulfilled; or false if it is still pending. */
+		inline def isCompleted: Boolean = this.oResult.isDefined;
+
+		/** @return true if this [[Covenant]] is still pending; or false if it was completed. */
+		inline def isPending: Boolean = this.oResult.isEmpty;
+
+		/** The [[Duty]] that this [[Covenant]] promises to fulfill. This duty is completed when the [[Covenant]] is fulfilled, either immediately by calling [[fulfill]], or after the completion of a specified duty by calling [[fulfillWith]]. */
+		val duty: Duty[A] = (onComplete: A => Unit) => {
+			thisCovenant.oResult.fold {
+				thisCovenant.onCompletedObservers = onComplete :: thisCovenant.onCompletedObservers
+			}(onComplete)
+		}
+
+		/** Provokes that the [[Duty]] that this [[Covenant]] promises to complete to be completed with the received `result`.
+		 *
+		 * @param result the result that the [[task]] this [[Commitment]] promised to complete . */
+		def fulfill(result: A)(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
+			queueForSequentialExecution {
+				oResult.fold {
+					this.oResult = Maybe.some(result);
+					this.onCompletedObservers.foreach(_(result));
+					// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
+					this.onCompletedObservers = Nil
+				} (onAlreadyCompleted)
+			};
+			this;
+		}
+
+		/** Triggers the execution of the specified [[Duty]] and completes the [[Duty]] that this [[Covenant]] promises to fulfill with the result of the specified duty once it finishes. */
+		def fulfillWith(dutyA: Duty[A])(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
+			if (dutyA ne this.duty)
+				dutyA.trigger()(result => fulfill(result)(onAlreadyCompleted));
+			this
+		}
+	}
+
 
 
 	///////////// TASK //////////////
@@ -1916,7 +1962,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		protected def flush(a: A): Duty[B]
 
-		inline def apply(a: A, inline isRunningInDoSiThEx: Boolean)(onComplete: B => Unit): Unit = {
+		inline def apply(a: A, inline isRunningInDoSiThEx: Boolean = false)(onComplete: B => Unit): Unit = {
 			def work(): Unit = flush(a).engagePortal(onComplete)
 
 			if isRunningInDoSiThEx then work()
