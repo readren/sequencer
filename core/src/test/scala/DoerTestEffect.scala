@@ -376,7 +376,8 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				mapTestResult <- check(_.map(identity))
 				flatMapTestResult <- check(_.flatMap(_ => task))
 				withFilterTestResult <- check(_.withFilter(_ => randomBool))
-				consumeTestResult <- check(_.consume(tryInt => ()))
+				consumeTestResult <- check(_.consume(_ => ()))
+				andThenTestResult <- check(_.andThen(_ => ()))
 				transformTestResult <- check(_.transform(identity))
 				transformWithTestResult <- check(_.transformWith(_ => task))
 				recoverTestResult <- check(_.recover { case x if randomBool => randomInt })
@@ -394,6 +395,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						&& flatMapTestResult
 						&& withFilterTestResult
 						&& consumeTestResult
+						&& andThenTestResult
 						&& transformTestResult
 						&& transformWithTestResult
 						&& recoverTestResult
@@ -410,6 +412,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					   |flatMap: $flatMapTestResult
 					   |withFilter: $withFilterTestResult
 					   |consume: $consumeTestResult
+					   |andThen: $andThenTestResult
 					   |transform: $transformTestResult
 					   |transformWith: $transformWithTestResult
 					   |recover: $recoverTestResult
@@ -464,6 +467,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				foreachTestResult <- check(_.foreach(_ => ()))
 				mapTestResult <- check(_.map(identity))
 				flatMapTestResult <- check(_.flatMap(_ => duty))
+				andThenTestResult <- check(_.andThen(_ => ()))
 				repeatedUntilSomeTestResult <- check(_.repeatedUntilSome() { (n, i) => if n > smallNonNegativeInt then Maybe.some(randomInt) else Maybe.empty })
 				repeatedUntilDefinedTestResult <- check(_.repeatedUntilDefined() { case (n, tryInt) if n > smallNonNegativeInt => tryInt })
 				repeatedWhileNoneTestResult <- check(_.repeatedWhileEmpty(Success(0)) { (n, tryInt) => if n > smallNonNegativeInt then Maybe.some(randomInt) else Maybe.empty })
@@ -474,6 +478,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						&& foreachTestResult
 						&& mapTestResult
 						&& flatMapTestResult
+						&& andThenTestResult
 						&& repeatedUntilSomeTestResult
 						&& repeatedUntilDefinedTestResult
 						&& repeatedWhileNoneTestResult
@@ -483,6 +488,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					   |foreach: $foreachTestResult
 					   |map: $mapTestResult
 					   |flatMap: $flatMapTestResult
+					   |andThen: $andThenTestResult
 					   |repeatedUntilSome: $repeatedUntilSomeTestResult
 					   |repeatedUntilDefined: $repeatedUntilDefinedTestResult
 					   |repeatedWhileNone: $repeatedWhileNoneTestResult

@@ -186,6 +186,21 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 */
 		inline final def flatMap[B](f: A => Duty[B]): Duty[B] = new FlatMap(thisDuty, f)
 
+		/** Returns a [[Duty]] that behaves like this [[Duty]] but that also calls the provided side-effecting function passing the result of this [[Duty]]. The result of the provided function is always ignored.
+		 * This method allows to enforce many callbacks that receive the same value are executed in a specified order.
+		 * Note that if one of the chained `andThen` callbacks returns a value or throws an exception, that result is not propagated to the subsequent `andThen` callbacks. Instead, the subsequent `andThen` callbacks are given the result of this task.
+		 * ===Detailed description===
+		 * Returns a duty that, when executed, it will:
+		 *		- trigger the execution of this duty,
+		 *		- then apply the received function to this duty's result,
+		 *		- and finally complete with the result of this task (ignoring the functions result).
+		 *
+		 * $threadSafe
+		 *
+		 * @param sideEffect a side-effecting function. The call to this function is wrapped in a try-catch block; however, unlike most other operators, unhandled non-fatal exceptions are not propagated to the result of the returned task. $isExecutedByDoSiThEx
+		 */
+		def andThen(sideEffect: A => Any): Duty[A] = new AndThen[A](thisDuty, sideEffect)
+		
 		/** Transforms this [[Duty]] into a [[Task]]
 		 * ===Detailed behavior===
 		 * Creates a [[Task]] that, when executed, triggers the execution of this [[Duty]] and completes with its result, which will always be successful.
@@ -477,6 +492,16 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		override def toString: String = deriveToString[FlatMap[A, B]](this)
 	}
+
+	final class AndThen[A](dutyA: Duty[A], sideEffect: A => Any) extends Duty[A] {
+		override def engage(onComplete: A => Unit): Unit =
+			dutyA.engagePortal { a =>
+				sideEffect(a)
+				onComplete(a)
+			}
+		override def toString: String = deriveToString[AndThen[A]](this)
+	}
+
 
 	final class ToTask[A](cA: Duty[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit = cA.engagePortal(onComplete.compose(Success.apply))
@@ -917,7 +942,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 *
 		 * @param sideEffect a side-effecting function. The call to this function is wrapped in a try-catch block; however, unlike most other operators, unhandled non-fatal exceptions are not propagated to the result of the returned task. $isExecutedByDoSiThEx
 		 */
-		final def andThen(sideEffect: Try[A] => Any): Task[A] = {
+		final override def andThen(sideEffect: Try[A] => Any): Task[A] = {
 			transform { tryA =>
 				try sideEffect(tryA)
 				catch {
