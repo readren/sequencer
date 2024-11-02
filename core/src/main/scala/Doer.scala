@@ -186,9 +186,10 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 */
 		inline final def flatMap[B](f: A => Duty[B]): Duty[B] = new FlatMap(thisDuty, f)
 
-		/** Returns a [[Duty]] that behaves like this [[Duty]] but that also calls the provided side-effecting function passing the result of this [[Duty]]. The result of the provided function is always ignored.
-		 * This method allows to enforce many callbacks that receive the same value are executed in a specified order.
-		 * Note that if one of the chained `andThen` callbacks returns a value or throws an exception, that result is not propagated to the subsequent `andThen` callbacks. Instead, the subsequent `andThen` callbacks are given the result of this task.
+		/** Applies the side-effecting function to the result of this duty without affecting the propagated value.
+		 * The result of the provided function is always ignored and therefore not propagated in any way.
+		 * This method allows to enforce many callbacks to receive the same value and to be executed in the order they are chained.
+		 * It's worth mentioning that the side-effecting function is executed before triggering the next duty in the chain.
 		 * ===Detailed description===
 		 * Returns a duty that, when executed, it will:
 		 *		- trigger the execution of this duty,
@@ -200,8 +201,9 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 * @param sideEffect a side-effecting function. The call to this function is wrapped in a try-catch block; however, unlike most other operators, unhandled non-fatal exceptions are not propagated to the result of the returned task. $isExecutedByDoSiThEx
 		 */
 		def andThen(sideEffect: A => Any): Duty[A] = new AndThen[A](thisDuty, sideEffect)
-		
-		/** Transforms this [[Duty]] into a [[Task]]
+
+		/** Wraps this [[Duty]] into a [[Task]].
+		 * Together with [[Task.toDuty]] this method allow to mix duties and task in the same chain.
 		 * ===Detailed behavior===
 		 * Creates a [[Task]] that, when executed, triggers the execution of this [[Duty]] and completes with its result, which will always be successful.
 		 * @return a [[Task]] whose result is the result of this task wrapped inside a [[Success]]. */
@@ -502,7 +504,6 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		override def toString: String = deriveToString[AndThen[A]](this)
 	}
 
-
 	final class ToTask[A](cA: Duty[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit = cA.engagePortal(onComplete.compose(Success.apply))
 
@@ -732,20 +733,22 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 	////////////// COVENANT ///////////////
 
 	/** A covenant to complete a [[Duty]].
+	 * The [[Duty]] that this [[Covenant]] promises to fulfill is itself. This duty is completed when this [[Covenant]] is fulfilled, either immediately by calling [[fulfill]], or after the completion of a specified duty by calling [[fulfillWith]].
 	 * [[Covenant]] is to [[Duty]] as [[Commitment]] is to [[Task]], and as [[scala.concurrent.Promise]] is to [[scala.concurrent.Future]]
 	 * */
-	final class Covenant[A] { thisCovenant =>
+	final class Covenant[A] extends Duty[A] { thisCovenant =>
 		private var oResult: Maybe[A] = Maybe.empty;
 		private var onCompletedObservers: List[A => Unit] = Nil;
 
-		/** @return true if this [[Covenant]] was fulfilled; or false if it is still pending. */
+		/** CAUTION: Should be called within the $DoSiThEx
+		 *  @return true if this [[Covenant]] was fulfilled; or false if it is still pending. */
 		inline def isCompleted: Boolean = this.oResult.isDefined;
 
-		/** @return true if this [[Covenant]] is still pending; or false if it was completed. */
+		/** CAUTION: Should be called within the $DoSiThEx
+		 *  @return true if this [[Covenant]] is still pending; or false if it was completed. */
 		inline def isPending: Boolean = this.oResult.isEmpty;
 
-		/** The [[Duty]] that this [[Covenant]] promises to fulfill. This duty is completed when the [[Covenant]] is fulfilled, either immediately by calling [[fulfill]], or after the completion of a specified duty by calling [[fulfillWith]]. */
-		val duty: Duty[A] = (onComplete: A => Unit) => {
+		protected override def engage(onComplete: A => Unit): Unit = {
 			thisCovenant.oResult.fold {
 				thisCovenant.onCompletedObservers = onComplete :: thisCovenant.onCompletedObservers
 			}(onComplete)
@@ -768,7 +771,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		/** Triggers the execution of the specified [[Duty]] and completes the [[Duty]] that this [[Covenant]] promises to fulfill with the result of the specified duty once it finishes. */
 		def fulfillWith(dutyA: Duty[A])(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
-			if (dutyA ne this.duty)
+			if (dutyA ne this)
 				dutyA.trigger()(result => fulfill(result)(onAlreadyCompleted));
 			this
 		}
@@ -927,9 +930,10 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 * */
 		inline final def withFilter(predicate: A => Boolean): Task[A] = new WithFilter(thisTask, predicate)
 
-		/** Applies the side-effecting function to the result of this task, and returns a new task with the result of this task.
-		 * This method allows to enforce many callbacks that receive the same value are executed in a specified order.
-		 * Note that if one of the chained `andThen` callbacks returns a value or throws an exception, that result is not propagated to the subsequent `andThen` callbacks. Instead, the subsequent `andThen` callbacks are given the result of this task.
+		/** Applies the side-effecting function to the result of this task without affecting the propagated value.
+		 * The result of the provided function is always ignored and therefore not propagated in any way.
+		 * This method allows to enforce many callbacks to receive the same value and to be executed in the order they are chained.
+		 * It's worth mentioning that the side-effecting function is executed before triggering the next duty in the chain.
 		 * ===Detailed description===
 		 * Returns a task that, when executed:
 		 *		- first executes this task;
@@ -953,7 +957,8 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		}
 		
 		/**
-		 * Transforms this [[Task]] into a [[Duty]] applying the given function to transform failure results into successful ones. This is like [[map]] but for the throwable; and like [[recover]] but with a complete function.
+		 * Wraps this [[Task]] into a [[Duty]] applying the given function to transform failure results into successful ones. This is like [[map]] but for the throwable; and like [[recover]] but with a complete function.
+		 * Together with [[Duty.toTask]] this method allow to mix duties and task in the same chain.
 		 *
 		 * @param exceptionHandler the complete function to apply to the result of this task if it is a [[Failure]]. $isExecutedByDoSiThEx */
 		inline final def toDuty[B >: A](exceptionHandler: Throwable => B): Duty[B] = new ToDuty[A, B](thisTask, exceptionHandler)
@@ -1919,20 +1924,22 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 	////////////// COMMITMENT ///////////////
 
 	/** A commitment to complete a [[Task]].
+	 * The [[Task]] this [[Commitment]] promises to complete is itself. This task's will complete when this [[Commitment]] is fulfilled or broken. That could be done immediately calling [[fulfill]], [[break]], [[complete]], or in a deferred manner by calling [[completeWith]].
 	 * Analogous to [[scala.concurrent.Promise]] but for a [[Task]] instead of a [[scala.concurrent.Future]].
 	 * */
-	final class Commitment[A] { thisCommitment =>
+	final class Commitment[A] extends Task[A] { thisCommitment =>
 		private var oResult: Maybe[Try[A]] = Maybe.empty;
 		private var onCompletedObservers: List[Try[A] => Unit] = Nil;
 
-		/** @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
+		/** CAUTION: should be called within the $DoSiThEx
+		 * @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
 		def isCompleted: Boolean = this.oResult.isDefined;
 
-		/** @return true if this [[Commitment]] is still pending; or false if it was completed. */
+		/** CAUTION: should be called within the $DoSiThEx
+		 * @return true if this [[Commitment]] is still pending; or false if it was completed. */
 		def isPending: Boolean = this.oResult.isEmpty;
 
-		/** The [[Task]] this [[Commitment]] promises to complete. This task's will complete when this [[Commitment]] is fulfilled or broken. That could be done immediately calling [[fulfill]], [[break]], [[complete]], or in a deferred manner by calling [[completeWith]]. */
-		val task: Task[A] = (onComplete: Try[A] => Unit) => {
+		protected override def engage(onComplete: Try[A] => Unit): Unit = {
 			thisCommitment.oResult.fold {
 				thisCommitment.onCompletedObservers = onComplete :: thisCommitment.onCompletedObservers
 			}(onComplete)
@@ -1967,7 +1974,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		/** Programs the completion of the [[task]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
 		def completeWith(otherTask: Task[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
-			if (otherTask ne this.task)
+			if (otherTask ne this)
 				otherTask.trigger()(result => complete(result)(onAlreadyCompleted));
 			this
 		}
