@@ -273,6 +273,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 
 			}
 
+			def f0[A](): A = throw exception
 			def f1[A, B](a: A): B = throw exception
 
 			def f2[A, B, C](a: A, b: B): C = throw exception
@@ -293,8 +294,9 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				repeatedUntilDefinedTestResult <- check(_.reiteratedHardyUntilDefined()(f2))
 				repeatedWhileNoneTestResult <- check(_.reiteratedWhileEmpty(Success(0))(f2))
 				repeatedWhileUndefinedTestResult <- check(_.reiteratedWhileUndefined(Success(0))(f2))
-				ownTestResult <- check(_.flatMap(_ => Task.own(() => throw exception)))
-				alienTestResult <- check(_.flatMap(_ => Task.alien(() => throw exception)))
+				ownTestResult <- check(_.flatMap(_ => Task.own(f0)))
+				ownFlatTestResult <- check(_.flatMap(_ => Task.ownFlat(f0)))
+				alienTestResult <- check(_.flatMap(_ => Task.alien(f0)))
 			} yield
 				assert(
 					foreachTestResult
@@ -311,6 +313,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						&& repeatedWhileNoneTestResult
 						&& repeatedWhileUndefinedTestResult
 						&& ownTestResult
+						&& ownFlatTestResult
 						&& alienTestResult,
 					s"""
 					   |foreach: $foreachTestResult
@@ -327,6 +330,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					   |repeatedWhileNone: $repeatedWhileNoneTestResult
 					   |repeatedWhileUndefined: $repeatedWhileUndefinedTestResult
 					   |own: $ownTestResult
+					   |ownFlat: $ownFlatTestResult
 					   |alien: $alienTestResult""".stripMargin
 				)
 			// TODO add a test to check if Task.andThen effect-full function is guarded.

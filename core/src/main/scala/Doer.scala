@@ -324,7 +324,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		/** Creates a [[Duty]] whose result is calculated withing the $DoSiThEx.
 		 * ===Detailed behavior===
-		 * Creates a duty that, when executed, evaluates the `resultSupplier` within the $DoSiThEx. If the evaluation finishes:
+		 * Creates a duty that, when executed, evaluates the `supplier` within the $DoSiThEx. If the evaluation finishes:
 		 *		- abruptly, will never complete.
 		 *		- normally, completes with the evaluation's result.
 		 *
@@ -334,6 +334,21 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 * @return the task described in the method description.
 		 */
 		inline def mine[A](supplier: () => A): Duty[A] = new Mine(supplier)
+
+		/** Creates a [[Duty]] that evaluates the specified duty supplier withing the $DoSiThEx.
+		 * Is equivalent to: {{{mine(supplier).flatMap(identity)}}}
+		 * ===Detailed behavior===
+		 * Creates a duty that, when executed:
+		 *		- evaluates the `supplier` within the $DoSiThEx;
+		 *		- then triggers the execution of the returned Duty;
+		 *		- finally completes with the result of executed duty.
+		 *
+		 * $$threadSafe
+		 *
+		 * @param supplier the supplier of the duty whose execution will give the result. $isExecutedByDoSiThEx $notGuarded
+		 * @return the task described in the method description.
+		 */
+		inline def mineFlat[A](supplier: () => Duty[A]): Duty[A] = new MineFlat(supplier)
 
 		/** Creates a [[Duty]] that, when executed, triggers the execution of a duty that belongs to another [[Doer]] within that [[Doer]]'s $DoSiThEx.
 		 * $threadSafe
@@ -528,6 +543,12 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		override def engage(onComplete: A => Unit): Unit = onComplete(supplier())
 
 		override def toString: String = deriveToString[Mine[A]](this)
+	}
+
+	final class MineFlat[A](supplier: () => Duty[A]) extends Duty[A] {
+		override def engage(onComplete: A => Unit): Unit = supplier().engagePortal(onComplete)
+
+		override def toString: String = deriveToString[MineFlat[A]](this)
 	}
 
 	final class DelegateTo[A](foreignDoer: Doer, foreignDuty: foreignDoer.Duty[A]) extends Duty[A] {
@@ -1196,6 +1217,21 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 */
 		inline final def mine[A](supplier: () => A): Task[A] = new Own(() => Success(supplier()));
 
+		/**
+		 * Creates a task evaluates a task supplier withing the $DoSiThEx.
+		 * Is equivalent to: {{{own(supplier).flatMap(identity)}}}
+		 * ===Detailed behavior===
+		 * Creates a task that, when executed, evaluates the `supplier` within the $DoSiThEx. If the evaluation finishes:
+		 *		- abruptly, completes with a [[Failure]] with the cause.
+		 *		- normally, triggers the execution of the returned task and completes with its result.
+		 *
+		 * $$threadSafe
+		 *
+		 * @param supplier the supplier of the result. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+		 * @return the task described in the method description.
+		 */
+		inline def ownFlat[A](supplier: () => Task[A]): Task[A] = new OwnFlat(supplier)
+		
 		/** Create a [[Task]] that just waits the completion of the specified [[Future]]. The result of the task, when executed, is the result of the received [[Future]].
 		 *
 		 * $threadSafe
@@ -1466,18 +1502,18 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		override def toString: String = deriveToString[Immediate[A]](this)
 	}
 
-	/** A [[Task]] that, when executed, calls the `resultSupplier` within the $DoSiThEx and if it finishes:
+	/** A [[Task]] that, when executed, calls the `supplier` within the $DoSiThEx and if it finishes:
 	 *  - abruptly, completes with the cause.
 	 *  - normally, completes with the result.
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
-	 * @param resultSupplier builds the result of this [[Task]]. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+	 * @param supplier builds the result of this [[Task]]. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 */
-	final class Own[+A](resultSupplier: () => Try[A]) extends Task[A] {
+	final class Own[+A](supplier: () => Try[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit = {
 			val result =
-				try resultSupplier()
+				try supplier()
 				catch {
 					case NonFatal(e) => Failure(e)
 				}
@@ -1486,16 +1522,27 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		override def toString: String = deriveToString[Own[A]](this)
 	}
+	
+	final class OwnFlat[+A](supplier: () => Task[A]) extends Task[A] {
+		override def engage(onComplete: Try[A] => Unit): Unit = {
+			val taskA =
+				try supplier()
+				catch {
+					case NonFatal(e) => Task.failed(e)
+				}
+			taskA.engagePortal(onComplete)	
+		}
+	}
 
 	/** A [[Task]] that just waits the completion of the specified [[Future]]. The result of the task, when executed, is the result of the received [[Future]].
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
-	 * @param resultFuture the future to wait for.
+	 * @param future the future to wait for.
 	 */
-	final class Wait[+A](resultFuture: Future[A]) extends Task[A] {
+	final class Wait[+A](future: Future[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit =
-			resultFuture.onComplete(onComplete)(ownSingleThreadExecutionContext)
+			future.onComplete(onComplete)(ownSingleThreadExecutionContext)
 
 		override def toString: String = deriveToString[Wait[A]](this)
 	}
@@ -1505,12 +1552,12 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 	 *
 	 * $onCompleteExecutedByDoSiThEx
 	 *
-	 * @param futureBuilder a function that starts the process and return a [[Future]] of its result. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
+	 * @param builder a function that starts the process and return a [[Future]] of its result. $isExecutedByDoSiThEx $unhandledErrorsArePropagatedToTaskResult
 	 * */
-	final class Alien[+A](futureBuilder: () => Future[A]) extends Task[A] {
+	final class Alien[+A](builder: () => Future[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit = {
 			val future =
-				try futureBuilder()
+				try builder()
 				catch {
 					case NonFatal(e) => Future.failed(e)
 				}

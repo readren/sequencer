@@ -26,7 +26,7 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 		def toTry(failureLabel: String): Gen[Try[A]] = Gen.frequency(
 			(5, genA.map(a => Success(a))),
 			(1, genA.map(a => Failure(new RuntimeException(s"$failureLabel: $a"))))
-		)
+			)
 
 		def toFutureBuilder(failureLabel: String): Gen[() => Future[A]] = {
 			val immediateGen: Gen[() => Future[A]] = genA.toTry(s"$failureLabel / FutureBuilder.immediate").map(tryA => () => Future.fromTry(tryA))
@@ -50,13 +50,18 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 		def toDuty: Gen[Duty[A]] = {
 			val readyGen: Gen[Duty[A]] = genA.map(Duty.ready)
 
-			val ownGen: Gen[Duty[A]] = genA.map { a => Duty.mine(() => a) }
-			
-			val foreignGen: Gen[Duty[A]] = for {a <- genA; delay <- Gen.oneOf(0, 1, 2, 4, 8, 16)} yield
-				Task.alien(() => Future { Thread.sleep(delay); a }(ExecutionContext.global)).map(_.asInstanceOf[Success[A]].value)
+			val mineGen: Gen[Duty[A]] = genA.map { a => Duty.mine(() => a) }
 
-			if synchronousOnly then Gen.oneOf(readyGen, ownGen)
-			else Gen.oneOf(readyGen, ownGen, foreignGen)
+			val ownFlatGen: Gen[Duty[A]] = Gen.oneOf(readyGen, mineGen).map(da => Duty.mineFlat(() => da))
+
+			val foreignGen: Gen[Duty[A]] = for {a <- genA; delay <- Gen.oneOf(0, 1, 2, 4, 8, 16)} yield
+				Task.alien(() => Future {
+					Thread.sleep(delay);
+					a
+				}(ExecutionContext.global)).map(_.asInstanceOf[Success[A]].value)
+
+			if synchronousOnly then Gen.oneOf(readyGen, mineGen, ownFlatGen)
+			else Gen.oneOf(readyGen, mineGen, ownFlatGen, foreignGen)
 		}
 
 		def toTask(failureLabel: String): Gen[Task[A]] = {
@@ -64,6 +69,8 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 			val immediateGen: Gen[Task[A]] = genA.toTry(s"$failureLabel / Task.immediate").map(Task.ready)
 
 			val ownGen: Gen[Task[A]] = genA.toTry(s"$failureLabel / Task.own").map { tryA => Task.own(() => tryA) }
+
+			val ownFlatGen: Gen[Task[A]] = Gen.oneOf(immediateGen, ownGen).map { taskA => Task.ownFlat(() => taskA) }
 
 			val waitGen: Gen[Task[A]] = genA.toFuture(s"$failureLabel / Task.wait").map(Task.wait)
 
@@ -73,8 +80,8 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 				futureBuilder => Task.foreign(foreignDoer)(foreignDoer.Task.alien(futureBuilder))
 			}
 
-			if synchronousOnly then Gen.oneOf(immediateGen, ownGen)
-			else Gen.oneOf(immediateGen, ownGen, waitGen, alienGen, foreignGen)
+			if synchronousOnly then Gen.oneOf(immediateGen, ownGen, ownFlatGen)
+			else Gen.oneOf(immediateGen, ownGen, ownFlatGen, waitGen, alienGen, foreignGen)
 		}
 	}
 
@@ -87,7 +94,7 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 	given taskArbitrary[A](using arbA: Arbitrary[A]): Arbitrary[Task[A]] = Arbitrary {
 		arbA.arbitrary.toTask("taskArbitrary")
 	}
-	
+
 	given dutyArbitrary[A](using arbA: Arbitrary[A]): Arbitrary[Duty[A]] = Arbitrary {
 		arbA.arbitrary.toDuty
 	}
@@ -108,11 +115,11 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 		}
 	}
 
-//	extension [A](thisTask: Task[A]) {
-//		def ====(otherTask: Task[A]): Task[Boolean] = {
-//			Task.combine(thisTask, otherTask)((a, b) => Success(a ==== b))
-//		}
-//	}
+	//	extension [A](thisTask: Task[A]) {
+	//		def ====(otherTask: Task[A]): Task[Boolean] = {
+	//			Task.combine(thisTask, otherTask)((a, b) => Success(a ==== b))
+	//		}
+	//	}
 
 	given throwableArbitrary: Arbitrary[Throwable] = Arbitrary {
 		for {
@@ -125,7 +132,7 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 				Gen.const(new InternalError(s"InternalError: [$msg]")),
 				Gen.const(new LinkageError(s"LinkageError: [$msg]")),
 				Gen.const(new Error(s"Error: [$msg]"))
-			)
+				)
 		} yield ex
 	}
 }
