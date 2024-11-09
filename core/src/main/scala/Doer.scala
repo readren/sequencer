@@ -764,6 +764,9 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		private var oResult: Maybe[A] = Maybe.empty;
 		private var onCompletedObservers: List[A => Unit] = Nil;
 
+		/** The [[Duty]] this [[Covenant]] promises to fulfill. */
+		inline def duty: Duty[A] = thisCovenant
+
 		/** CAUTION: Should be called within the $DoSiThEx
 		 *  @return true if this [[Covenant]] was fulfilled; or false if it is still pending. */
 		inline def isCompleted: Boolean = this.oResult.isDefined;
@@ -1980,6 +1983,9 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 	final class Commitment[A] extends Task[A] { thisCommitment =>
 		private var oResult: Maybe[Try[A]] = Maybe.empty;
 		private var onCompletedObservers: List[Try[A] => Unit] = Nil;
+
+		/** The [[Task]] this [[Commitment]] promises to fulfill. */
+		inline def task: Task[A] = thisCommitment
 
 		/** CAUTION: should be called within the $DoSiThEx
 		 * @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
