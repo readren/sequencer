@@ -355,7 +355,10 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 *
 		 * @param foreignDoer the [[Doer]] to whom the `foreignTask` belongs.
 		 * @return a duty that belongs to this [[Doer]] that completes when the `foreignDuty` is completed by the `foreignDoer`. */
-		inline def foreign[A](foreignDoer: Doer)(foreignDuty: foreignDoer.Duty[A]): Duty[A] = new DelegateTo[A](foreignDoer, foreignDuty)
+		inline def foreign[A](foreignDoer: Doer)(foreignDuty: foreignDoer.Duty[A]): Duty[A] = {
+			if foreignDoer eq thisDoer then foreignDuty.asInstanceOf[thisDoer.Duty[A]]
+			else new DelegateTo[A](foreignDoer, foreignDuty)
+		}
 
 		/**
 		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of two tasks and returns their results combined with the received function.
@@ -552,7 +555,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 	}
 
 	final class DelegateTo[A](foreignDoer: Doer, foreignDuty: foreignDoer.Duty[A]) extends Duty[A] {
-		override def engage(onComplete: A => Unit): Unit = foreignDuty.engagePortal(a => queueForSequentialExecution(onComplete(a)))
+		override def engage(onComplete: A => Unit): Unit = foreignDuty.trigger()(a => queueForSequentialExecution(onComplete(a)))
 
 		override def toString: String = deriveToString[DelegateTo[A]](this)
 	}
