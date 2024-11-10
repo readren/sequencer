@@ -149,10 +149,10 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		/**
 		 * Processes the result of this [[Duty]] once it is completed for its side effects.
-		 *
+		 * Is equivalent to {{{map[Unit](consumer)}}}
 		 * @param consumer called with this task result when it completes. $isExecutedByDoSiThEx $notGuarded
 		 */
-		inline final def foreach(consumer: A => Unit): Duty[Unit] = new ForEach[A](thisDuty, consumer)
+		inline final def foreach(consumer: A => Unit): Duty[Unit] = new Map(thisDuty, consumer)
 
 		/**
 		 * Transforms this [[Duty]] by applying the given function to the result.
@@ -493,12 +493,6 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 			}
 		}
 
-	}
-
-	final class ForEach[A](cA: Duty[A], consumer: A => Unit) extends Duty[Unit] {
-		override def engage(onComplete: Unit => Unit): Unit = cA.engagePortal(onComplete.compose(consumer))
-
-		override def toString: String = deriveToString[ForEach[A]](this)
 	}
 
 	final class Map[A, B](cA: Duty[A], f: A => B) extends Duty[B] {
