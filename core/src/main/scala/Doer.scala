@@ -295,7 +295,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 * Wraps this duty into another that belongs to another [[Doer]].
 		 * Useful to chain [[Duty]]'s operations that involve different [[Doer]]s.
 		 * ===Detailed behavior===
-		 * Returns a duty that, when executed, it will execute this duty within this [[Doer]]'s $DoSiThEx and complete with the same result.
+		 * Returns a duty that belongs to the specified [[Doer]] that, when executed, it will execute this duty within this [[Doer]]'s $DoSiThEx and complete with the same result but within the specified [[Doer]]'s DoSiThEx.
 		 *
 		 * $threadSafe
 		 *
@@ -350,7 +350,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 */
 		inline def mineFlat[A](supplier: () => Duty[A]): Duty[A] = new MineFlat(supplier)
 
-		/** Creates a [[Duty]] that, when executed, triggers the execution of a duty that belongs to another [[Doer]] within that [[Doer]]'s $DoSiThEx.
+		/** Creates a [[Duty]] that, when executed, triggers the execution of a duty that belongs to another [[Doer]] within that [[Doer]]'s $DoSiThEx; and completes with the same result as the `foreignDuty` but within this [[Doer]]'s DoSiThEx.
 		 * $threadSafe
 		 *
 		 * @param foreignDoer the [[Doer]] to whom the `foreignTask` belongs.
@@ -1127,7 +1127,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 * Wraps this task into another that belongs to other [[Doer]].
 		 * Useful to chain [[Task]]'s operations that involve different [[Doer]]s.
 		 * ===Detailed behavior===
-		 * Returns a task that, when executed, it will execute this task within this [[Doer]]'s $DoSiThEx and complete with the same result.
+		 * Returns a task that belongs to the specified [[Doer]] that, when executed, it will execute this task within this [[Doer]]'s $DoSiThEx and complete with the same result but within specified [[Doers]]'s DoSiThEx.
 		 * CAUTION: Avoid closing over the same mutable variable from two transformations applied to Task instances belonging to different [[Doer]]s.
 		 * Remember that all routines (e.g., functions, procedures, predicates, and callbacks) provided to [[Task]] methods are executed by the $DoSiThEx of the [[Doer]] that owns the [[Task]] instance on which the method is called.
 		 * Therefore, calling [[trigger]] on the returned task will execute the `onComplete` passed to it within the $DoSiThEx of the `otherDoer`.
@@ -1251,7 +1251,8 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 		 */
 		inline final def alien[A](supplier: () => Future[A]): Task[A] = new Alien(supplier);
 
-		/** Creates a [[Task]] that, when executed, triggers the execution of a task that belongs to another [[Doer]] within that [[Doer]]'s $DoSiThEx.
+		/** Creates a [[Task]] that, when executed, triggers the execution the `foreignTask` (a task that belongs to another [[Doer]]) within that [[Doer]]'s $DoSiThEx; and completes with the same result as the foreign task but within this [[Doer]]'s DoSiThEx.
+		 *
 		 * $threadSafe
 		 *
 		 * @param foreignDoer the [[Doer]] to whom the `foreignTask` belongs.
@@ -1522,7 +1523,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 
 		override def toString: String = deriveToString[Own[A]](this)
 	}
-	
+
 	final class OwnFlat[+A](supplier: () => Task[A]) extends Task[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit = {
 			val taskA =
@@ -1530,7 +1531,7 @@ trait Doer(assistant: Doer.Assistant) { thisDoer =>
 				catch {
 					case NonFatal(e) => Task.failed(e)
 				}
-			taskA.engagePortal(onComplete)	
+			taskA.engagePortal(onComplete)
 		}
 	}
 
