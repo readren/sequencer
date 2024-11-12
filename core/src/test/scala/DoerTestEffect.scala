@@ -22,7 +22,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	private val unhandledExceptions = mutable.Set.empty[String]
 	private val reportedExceptions = mutable.Set.empty[String]
 
-	private val assistant = new Doer.Assistant {
+	private val theAssistant = new Doer.Assistant {
 		private val doSiThEx = Executors.newSingleThreadExecutor()
 
 		private val sequencer: AtomicInteger = new AtomicInteger(0)
@@ -58,7 +58,9 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 
 	}
 
-	private val doer: Doer = new Doer(assistant) {}
+	private val doer: Doer = new Doer {
+		override protected val assistant: Doer.Assistant = theAssistant
+	}
 
 	import doer.*
 

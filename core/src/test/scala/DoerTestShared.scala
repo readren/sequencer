@@ -19,7 +19,9 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 
 			override def reportFailure(cause: Throwable): Unit = throw cause
 		}
-		new Doer(foreignAssistant) {}
+		new Doer {
+			override protected val assistant: Doer.Assistant = foreignAssistant
+		}
 	}
 
 	extension [A](genA: Gen[A]) {

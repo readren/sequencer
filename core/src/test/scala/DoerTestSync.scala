@@ -16,7 +16,7 @@ import scala.util.{Failure, Success, Try}
 class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matchers {
 
 	private var oDoerThreadId: Option[Long] = None
-	private val assistant = new Doer.Assistant {
+	private val theAssistant = new Doer.Assistant {
 		override def queueForSequentialExecution(runnable: Runnable): Unit = {
 			oDoerThreadId match {
 				case None => oDoerThreadId = Some(Thread.currentThread().getId)
@@ -28,7 +28,9 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 		override def reportFailure(cause: Throwable): Unit = throw cause
 	}
 
-	val doer: Doer = new Doer(assistant) {}
+	val doer: Doer = new Doer {
+		override protected val assistant: Doer.Assistant = theAssistant
+	}
 
 	import doer.*
 	import Task.*

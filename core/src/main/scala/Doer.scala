@@ -50,8 +50,9 @@ object Doer {
  * @define maxRecursionDepthPerExecutor Maximum recursion depth per executor. Once this limit is reached, the recursion continues in a new executor. The result does not depend on this parameter as long as no [[StackOverflowError]] occurs.
  * @define isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, the caller should set this parameter to `false` (or don't specify a value). This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously. This method is thread-safe when this parameter value is false.
  */
-trait Doer(assistant: Doer.Assistant) { thisDoer =>
+trait Doer { thisDoer =>
 
+	protected val assistant: Doer.Assistant
 
 	/**
 	 * Queues the execution of the received [[Runnable]] in this $DoSiThEx. See [[Doer.Assistant.queueForSequentialExecution]]
