@@ -9,6 +9,9 @@ final class Maybe[+A](private val value: Any) extends AnyVal {
 	inline def get: A =
 		if isEmpty then throw new NoSuchElementException("FastOption.get on empty FastOption")
 		else value.asInstanceOf[A]
+		
+	inline def foreach(inline f: A => Unit): Unit =
+		if isDefined then f(value.asInstanceOf[A])	
 
 	inline def map[B](f: A => B): Maybe[B] =
 		if isEmpty then Maybe.empty else Maybe.some(f(get))
