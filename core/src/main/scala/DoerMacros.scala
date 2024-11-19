@@ -36,7 +36,7 @@ object DoerMacros {
 				}
 		}
 	}
-	
+
 	def queueForSequentialExecutionImpl(assistantExpr: Expr[Assistant], procedureExpr: Expr[Unit])(using quotes: Quotes): Expr[Unit] = {
 		import quotes.reflect.*
 
@@ -44,13 +44,13 @@ object DoerMacros {
 		val pos: Position = procedureExpr.asTerm.pos;
 		// Build source info text.
 		val sourceInfo = Expr(s"{ ${procedureExpr.asTerm.show} } @ ${pos.sourceFile.name}:${pos.startLine + 1}")
-//		val sourceInfo = Expr(s"{ ${pos.sourceCode.getOrElse("not available")} } @ ${pos.sourceFile.name}:${pos.startLine + 1}")
+		//		val sourceInfo = Expr(s"{ ${pos.sourceCode.getOrElse("not available")} } @ ${pos.sourceFile.name}:${pos.startLine + 1}")
 
 		val runnable: Expr[Runnable] = '{
 			new Runnable {
 				override def run(): Unit = $procedureExpr
 
-				override def toString: String =	$sourceInfo
+				override def toString: String = $sourceInfo
 			}
 		}
 		// Call the assistant's method with the new wrapped Runnable

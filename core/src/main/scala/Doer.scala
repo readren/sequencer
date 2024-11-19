@@ -3,7 +3,9 @@ package readren.taskflow
 import Doer.ExceptionReport
 
 import scala.annotation.tailrec
+import scala.collection.IterableFactory
 import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
@@ -161,13 +163,13 @@ trait Doer { thisDoer =>
 		 * Creates a [[Duty]] that, when executed, will trigger the execution of this duty and apply `f` to its result.
 		 *
 		 * $threadSafe
-		 * 
+		 *
 		 * @param f a function that transforms the result of this task, when it is successful.
 		 *
 		 * $isExecutedByDoSiThEx
 		 *
 		 * $notGuarded
-		 */		
+		 */
 		inline final def map[B](f: A => B): Duty[B] = new Map(thisDuty, f)
 
 		/**
@@ -380,7 +382,9 @@ trait Doer { thisDoer =>
 			new ForkJoin(dutyA, dutyB, f)
 
 		/**
-		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the received list, and completes with a list containing their results in the same order.
+		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the received iterable, and completes with a collection containing their results in the same order.
+		 * This overload is only convenient for very small lists. It is not efficient for large lists and may cause stack-overflow when the task is executed.
+		 * Use the other overload for large lists or other kind of iterables.
 		 *
 		 * $threadSafe
 		 *
@@ -405,6 +409,29 @@ trait Doer { thisDoer =>
 				case lastDuty :: previousDuties => loop(lastDuty.map(List(_)), previousDuties);
 			}
 		}
+
+		/**
+		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the received iterable, and completes with a collection containing their results in the same order.
+		 * This overload is more efficient than the other. Especially for large iterables.
+		 * $threadSafe
+		 *
+		 * @param duties the list of [[Duty]]s that the returned task will trigger simultaneously to combine their results.
+		 * @return the duty described in the method description.
+		 *
+		 * */
+		def sequence[A: ClassTag, C[x] <: Iterable[x], To[_]](duties: C[Duty[A]])(using factory: IterableFactory[To]): Duty[To[A]] = {
+			sequenceToArray(duties).map { array =>
+				val builder = factory.newBuilder[A]
+				var index = 0
+				while index < array.length do {
+					builder.addOne(array(index))
+					index += 1
+				}
+				builder.result()
+			}
+		}
+
+		inline def sequenceToArray[A: ClassTag, C[x] <: Iterable[x]](duties: C[Duty[A]]): Duty[Array[A]] = new SequenceDuty[A, C](duties)
 
 		/** Creates a new [[Duty]] that, when executed, repeatedly constructs a duty and executes it while a condition returns [[Right]].
 		 * ==Detailed behavior:==
@@ -514,6 +541,7 @@ trait Doer { thisDoer =>
 				sideEffect(a)
 				onComplete(a)
 			}
+
 		override def toString: String = deriveToString[AndThen[A]](this)
 	}
 
@@ -580,6 +608,31 @@ trait Doer { thisDoer =>
 
 		override def toString: String = deriveToString[ForkJoin[A, B, C]](this)
 	}
+
+	class SequenceDuty[A: ClassTag, C[x] <: Iterable[x]](duties: C[Duty[A]]) extends Duty[Array[A]] {
+		override def engage(onComplete: Array[A] => Unit): Unit = {
+			val size = duties.size
+			val array = Array.ofDim[A](size)
+			val dutyIterator = duties.iterator
+			var completedCounter: Int = 0
+
+			@tailrec
+			def loop(index: Int): Unit = {
+				if index < size then {
+					val duty = dutyIterator.next
+					duty.engagePortal { a =>
+						array(index) = a
+						completedCounter += 1
+						if completedCounter == size then onComplete(array)
+					}
+					loop(index + 1)
+				}
+			}
+
+			loop(0)
+		}
+	}
+
 
 	/**
 	 * A [[Duty]] that executes the received duty until applying the received function yields [[Maybe.some]].
@@ -786,7 +839,7 @@ trait Doer { thisDoer =>
 					this.onCompletedObservers.foreach(_(result));
 					// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
 					this.onCompletedObservers = Nil
-				} (onAlreadyCompleted)
+				}(onAlreadyCompleted)
 			};
 			this;
 		}
@@ -977,7 +1030,7 @@ trait Doer { thisDoer =>
 				tryA
 			}
 		}
-		
+
 		/**
 		 * Wraps this [[Task]] into a [[Duty]] applying the given function to transform failure results into successful ones. This is like [[map]] but for the throwable; and like [[recover]] but with a complete function.
 		 * Together with [[Duty.toTask]] this method allow to mix duties and task in the same chain.
@@ -1232,7 +1285,7 @@ trait Doer { thisDoer =>
 		 * @return the task described in the method description.
 		 */
 		inline def ownFlat[A](supplier: () => Task[A]): Task[A] = new OwnFlat(supplier)
-		
+
 		/** Create a [[Task]] that just waits the completion of the specified [[Future]]. The result of the task, when executed, is the result of the received [[Future]].
 		 *
 		 * $threadSafe
@@ -1285,6 +1338,8 @@ trait Doer { thisDoer =>
 
 		/**
 		 * Creates a task that, when executed, simultaneously triggers the execution of all the [[Task]]s in the received list, and completes with a list containing their results in the same order.
+		 * This overload is only convenient for very small lists. It is not efficient for large lists and may cause stack-overflow when the task is executed.
+		 * Use the other overload for large lists or other kind of iterables.
 		 *
 		 * $threadSafe
 		 *
@@ -1314,6 +1369,30 @@ trait Doer { thisDoer =>
 				case lastTask :: previousTasks => loop(lastTask.map(List(_)), previousTasks);
 			}
 		}
+
+		/**
+		 * Creates a task that, when executed, simultaneously triggers the execution of all the [[Task]]s in the received list, and completes with a list containing their results in the same order.
+		 * This overload is more efficient than the other. Especially for large iterables.
+		 * $threadSafe
+		 *
+		 * @param tasks the list of [[Task]]s that the returned task will trigger simultaneously to combine their results.
+		 * @return the task described in the method description.
+		 *
+		 * */
+		def sequence[A: ClassTag, C[x] <: Iterable[x], To[_]](tasks: C[Task[A]])(using factory: IterableFactory[To]): Task[To[A]] = {
+			sequenceToArray(tasks).map { array =>
+				val builder = factory.newBuilder[A]
+				var index = 0
+				while index < array.length do {
+					builder.addOne(array(index))
+					index += 1
+				}
+				builder.result()
+			}
+		}
+
+		/** Like [[sequence]] but the result collection is an [[Array]] */
+		inline def sequenceToArray[A: ClassTag, C[x] <: Iterable[x]](tasks: C[Task[A]]): Task[Array[A]] = new SequenceTask[A, C](tasks)
 
 		/** Creates a new [[Task]] that, when executed, repeatedly constructs a task and executes it while a condition returns [[Right]].
 		 * ==Detailed behavior:==
@@ -1479,6 +1558,7 @@ trait Doer { thisDoer =>
 				onComplete(b)
 			}
 		}
+
 		override def toString: String = deriveToString[ToDuty[A, B]](this)
 	}
 
@@ -1711,7 +1791,9 @@ trait Doer { thisDoer =>
 			var ota: Maybe[Try[A]] = Maybe.empty;
 			var otb: Maybe[Try[B]] = Maybe.empty;
 			taskA.engagePortal { tryA =>
-				otb.fold { ota = Maybe.some(tryA) } { tryB =>
+				otb.fold {
+					ota = Maybe.some(tryA)
+				} { tryB =>
 					val tryC =
 						try f(tryA, tryB)
 						catch {
@@ -1721,7 +1803,9 @@ trait Doer { thisDoer =>
 				}
 			}
 			taskB.engagePortal { tryB =>
-				ota.fold { otb = Maybe.some(tryB) } { tryA =>
+				ota.fold {
+					otb = Maybe.some(tryB)
+				} { tryA =>
 					val tryC =
 						try f(tryA, tryB)
 						catch {
@@ -1735,6 +1819,33 @@ trait Doer { thisDoer =>
 		override def toString: String = deriveToString[CombinedTask[A, B, C]](this)
 	}
 
+	class SequenceTask[A: ClassTag, C[x] <: Iterable[x]](tasks: C[Task[A]]) extends Task[Array[A]] {
+		override def engage(onComplete: Try[Array[A]] => Unit): Unit = {
+			val size = tasks.size
+			val array = Array.ofDim[A](size)
+			val taskIterator = tasks.iterator
+			var completedCounter: Int = 0
+
+			@tailrec
+			def loop(index: Int): Unit = {
+				if index < size then {
+					val task = taskIterator.next
+					task.engagePortal {
+						case Success(a) =>
+							array(index) = a
+							completedCounter += 1
+							if completedCounter == size then onComplete(Success(array))
+
+						case failure: Failure[A] =>
+							onComplete(failure.asInstanceOf[Failure[Array[A]]])
+					}
+					loop(index + 1)
+				}
+			}
+
+			loop(0)
+		}
+	}
 
 	/**
 	 * A [[Task]] that executes the received task until applying the received function yields [[Maybe.some]].
@@ -1776,7 +1887,7 @@ trait Doer { thisDoer =>
 						} else {
 							queueForSequentialExecution(loop(completedCycles + 1, 0))
 						}
-					} (onComplete)
+					}(onComplete)
 				}
 			}
 
