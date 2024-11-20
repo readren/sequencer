@@ -382,15 +382,15 @@ trait Doer { thisDoer =>
 			new ForkJoin(dutyA, dutyB, f)
 
 		/**
-		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the received iterable, and completes with a collection containing their results in the same order.
-		 * This overload is only convenient for very small lists. It is not efficient for large lists and may cause stack-overflow when the task is executed.
+		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the received iterable, and completes with a collection containing their results in the same order if all are successful, or a failure if any is faulty.
+		 * This overload is only convenient for small lists. For large ones it is not efficient and also may cause stack-overflow when the task is executed.
 		 * Use the other overload for large lists or other kind of iterables.
 		 *
 		 * $threadSafe
 		 *
-		 * @param duties the list of [[Duty]]s that the returned task will trigger simultaneously to combine their results.
+		 * @param duties the `Iterable` of duties that the returned task will trigger simultaneously to combine their results.
+		 * @tparam A the result type of all the duties
 		 * @return the duty described in the method description.
-		 *
 		 * */
 		def sequence[A](duties: List[Duty[A]]): Duty[List[A]] = {
 			@tailrec
@@ -412,12 +412,15 @@ trait Doer { thisDoer =>
 
 		/**
 		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the received iterable, and completes with a collection containing their results in the same order.
-		 * This overload is more efficient than the other. Especially for large iterables.
+		 * This overload accepts any [[Iterable]] and is more efficient than the other (above). Especially for large iterables.
 		 * $threadSafe
 		 *
-		 * @param duties the list of [[Duty]]s that the returned task will trigger simultaneously to combine their results.
+		 * @param duties the `Iterable` of duties that the returned task will trigger simultaneously to combine their results.
+		 * @param factory the [[IterableFactory]] needed to build the [[Iterable]] that will contain the results. Note that most [[Iterable]] implementations' companion objects are an [[IterableFactory]].
+		 * @tparam A the result type of all the duties
+		 * @tparam C the higher-kinded type of the `Iterable` of duties.
+		 * @tparam To the type of the `Iterable` that will contain the results.
 		 * @return the duty described in the method description.
-		 *
 		 * */
 		def sequence[A: ClassTag, C[x] <: Iterable[x], To[_]](duties: C[Duty[A]])(using factory: IterableFactory[To]): Duty[To[A]] = {
 			sequenceToArray(duties).map { array =>
@@ -431,6 +434,7 @@ trait Doer { thisDoer =>
 			}
 		}
 
+		/** Like [[sequence]] but the resulting collection's higher-kinded type `To` is fixed to [[Array]]. */
 		inline def sequenceToArray[A: ClassTag, C[x] <: Iterable[x]](duties: C[Duty[A]]): Duty[Array[A]] = new SequenceDuty[A, C](duties)
 
 		/** Creates a new [[Duty]] that, when executed, repeatedly constructs a duty and executes it while a condition returns [[Right]].
@@ -609,6 +613,7 @@ trait Doer { thisDoer =>
 		override def toString: String = deriveToString[ForkJoin[A, B, C]](this)
 	}
 
+	/** @see [[Duty.sequenceToArray]] */
 	class SequenceDuty[A: ClassTag, C[x] <: Iterable[x]](duties: C[Duty[A]]) extends Duty[Array[A]] {
 		override def engage(onComplete: Array[A] => Unit): Unit = {
 			val size = duties.size
@@ -1338,7 +1343,7 @@ trait Doer { thisDoer =>
 
 		/**
 		 * Creates a task that, when executed, simultaneously triggers the execution of all the [[Task]]s in the received list, and completes with a list containing their results in the same order.
-		 * This overload is only convenient for very small lists. It is not efficient for large lists and may cause stack-overflow when the task is executed.
+		 * This overload only accepts [[List]]s and is only convenient when the list is small. For large ones it is not efficient and also may cause stack-overflow when the task is executed.
 		 * Use the other overload for large lists or other kind of iterables.
 		 *
 		 * $threadSafe
@@ -1371,15 +1376,18 @@ trait Doer { thisDoer =>
 		}
 
 		/**
-		 * Creates a task that, when executed, simultaneously triggers the execution of all the [[Task]]s in the received list, and completes with a list containing their results in the same order.
-		 * This overload is more efficient than the other. Especially for large iterables.
+		 * Creates a task that, when executed, simultaneously triggers the execution of all the [[Task]]s in the received list, and completes with a list containing their results in the same order if all are successful, or a Failure if anyone is faulty.
+		 * This overload accepts any [[Iterable]] and is more efficient than the other (above). Especially for large iterables.
 		 * $threadSafe
 		 *
-		 * @param tasks the list of [[Task]]s that the returned task will trigger simultaneously to combine their results.
+		 * @param tasks the `Iterable` of tasks that the returned task will trigger simultaneously to combine their results.
+		 * @param factory the [[IterableFactory]] needed to build the [[Iterable]] that will contain the results. Note that most [[Iterable]] implementations' companion objects are an [[IterableFactory]].
+		 * @tparam A the result type of all the tasks.
+		 * @tparam C the higher-kinded type of the `Iterable` of tasks.
+		 * @tparam To the type of the `Iterable` that will contain the results.
 		 * @return the task described in the method description.
-		 *
 		 * */
-		def sequence[A: ClassTag, C[x] <: Iterable[x], To[_]](tasks: C[Task[A]])(using factory: IterableFactory[To]): Task[To[A]] = {
+		def sequence[A: ClassTag, C[x] <: Iterable[x], To[x] <: Iterable[x]](tasks: C[Task[A]])(using factory: IterableFactory[To]): Task[To[A]] = {
 			sequenceToArray(tasks).map { array =>
 				val builder = factory.newBuilder[A]
 				var index = 0
@@ -1391,8 +1399,35 @@ trait Doer { thisDoer =>
 			}
 		}
 
-		/** Like [[sequence]] but the result collection is an [[Array]] */
+		/** Like [[sequence]] but the resulting collection's higher-kinded type `To` is fixed to [[Array]]. */
 		inline def sequenceToArray[A: ClassTag, C[x] <: Iterable[x]](tasks: C[Task[A]]): Task[Array[A]] = new SequenceTask[A, C](tasks)
+
+
+		/**
+		 * Creates a task that, when executed, simultaneously triggers the execution of all the [[Task]]s in the received list, and completes with a list containing their results, successful or not, in the same order.
+		 * $threadSafe
+		 *
+		 * @param tasks the `Iterable` of tasks that the returned task will trigger simultaneously to combine their results.
+		 * @param factory the [[IterableFactory]] needed to build the [[Iterable]] that will contain the results. Note that most [[Iterable]] implementations' companion objects are an [[IterableFactory]].
+		 * @tparam A the result type of all the tasks.
+		 * @tparam C the higher-kinded type of the `Iterable` of tasks.
+		 * @tparam To the type of the `Iterable` that will contain the results.
+		 * @return the task described in the method description.
+		 * */
+		def sequenceHardy[A: ClassTag, C[x] <: Iterable[x], To[x] <: Iterable[x]](tasks: C[Task[A]])(using factory: IterableFactory[To]): Task[To[Try[A]]] = {
+			sequenceHardyToArray(tasks).map { array =>
+				val builder = factory.newBuilder[Try[A]]
+				var index = 0
+				while index < array.length do {
+					builder.addOne(array(index))
+					index += 1
+				}
+				builder.result()
+			}
+		}
+
+		/** Like [[sequenceHardy]] but the resulting collection's higher-kinded type `To` is fixed to [[Array]]. */
+		inline def sequenceHardyToArray[A: ClassTag, C[x] <: Iterable[x]](tasks: C[Task[A]]): Task[Array[Try[A]]] = new SequenceHardy[A, C](tasks)
 
 		/** Creates a new [[Task]] that, when executed, repeatedly constructs a task and executes it while a condition returns [[Right]].
 		 * ==Detailed behavior:==
@@ -1819,31 +1854,48 @@ trait Doer { thisDoer =>
 		override def toString: String = deriveToString[CombinedTask[A, B, C]](this)
 	}
 
-	class SequenceTask[A: ClassTag, C[x] <: Iterable[x]](tasks: C[Task[A]]) extends Task[Array[A]] {
+	/** @see [[Task.sequenceToArray]] */
+	final class SequenceTask[A: ClassTag, C[x] <: Iterable[x]](tasks: C[Task[A]]) extends Task[Array[A]] {
 		override def engage(onComplete: Try[Array[A]] => Unit): Unit = {
 			val size = tasks.size
 			val array = Array.ofDim[A](size)
 			val taskIterator = tasks.iterator
 			var completedCounter: Int = 0
+			var index = 0
 
-			@tailrec
-			def loop(index: Int): Unit = {
-				if index < size then {
-					val task = taskIterator.next
-					task.engagePortal {
-						case Success(a) =>
-							array(index) = a
-							completedCounter += 1
-							if completedCounter == size then onComplete(Success(array))
+			while index < size do {
+				val task = taskIterator.next
+				task.engagePortal {
+					case Success(a) =>
+						array(index) = a
+						completedCounter += 1
+						if completedCounter == size then onComplete(Success(array))
 
-						case failure: Failure[A] =>
-							onComplete(failure.asInstanceOf[Failure[Array[A]]])
-					}
-					loop(index + 1)
+					case failure: Failure[A] =>
+						onComplete(failure.asInstanceOf[Failure[Array[A]]])
 				}
+				index += 1
 			}
+		}
+	}
 
-			loop(0)
+	final class SequenceHardy[A: ClassTag, C[x] <: Iterable[x]](tasks: C[Task[A]]) extends Task[Array[Try[A]]] {
+		override def engage(onComplete: Try[Array[Try[A]]] => Unit): Unit = {
+			val size = tasks.size
+			val array = Array.ofDim[Try[A]](size)
+			val taskIterator = tasks.iterator
+			var completedCounter: Int = 0
+			var index = 0
+
+			while index < size do {
+				val task = taskIterator.next
+				task.engagePortal { tryA =>
+					array(index) = tryA
+					completedCounter += 1
+					if completedCounter == size then onComplete(Success(array))
+				}
+				index += 1
+			}
 		}
 	}
 
