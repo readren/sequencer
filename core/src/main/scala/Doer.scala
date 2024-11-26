@@ -51,7 +51,7 @@ abstract class AbstractDoer extends Doer
  * @define unhandledErrorsArePropagatedToTaskResult The call to this routine is guarded with try-catch. If it throws a non-fatal exception it will be caught and the [[Task]] will complete with a [[Failure]] containing the error.
  * @define unhandledErrorsAreReported The call to this routine is guarded with a try-catch. If the evaluation throws a non-fatal exception it will be caught and reported with [[Doer.Assistant.reportFailure()]].
  * @define notGuarded CAUTION: The call to this function is NOT guarded with a try-catch. If its evaluation terminates abruptly the duty will never complete. The same occurs with all routines received by [[Duty]] operations. This is one of the main differences with [[Task]] operation.
- * @define maxRecursionDepthPerExecutor Maximum recursion depth per executor. Once this limit is reached, the recursion continues in a new executor. The result does not depend on this parameter as long as no [[StackOverflowError]] occurs.
+ * @define maxRecursionDepthPerExecutor Maximum recursion depth per executor. Once this limit is reached, the recursion continues in a new executor. The result does not depend on this parameter as long as no [[java.lang.StackOverflowError]] occurs.
  * @define isRunningInDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, the caller should set this parameter to `false` (or don't specify a value). This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously. This method is thread-safe when this parameter value is false.
  */
 trait Doer { thisDoer =>
@@ -115,7 +115,7 @@ trait Doer { thisDoer =>
 		 * The implementation may assume this method is invoked within the $DoSiThEx.
 		 *
 		 * Any non-fatal exceptions thrown by this method must be caught, except those thrown by the  provided callback.
-		 * If a non-fatal exception originates from a routine passed in the class constructor, including those captured over a closure, it should either be propagated to the task's result or reported using [[assistant.reportFailure]] if propagation is not feasible.
+		 * If a non-fatal exception originates from a routine passed in the class constructor, including those captured over a closure, it should either be propagated to the task's result or reported using [[Doer.assistant.reportFailure]] if propagation is not feasible.
 		 *
 		 * It is critical to note that exceptions thrown by the callback should never be caught.
 		 *
@@ -623,23 +623,22 @@ trait Doer { thisDoer =>
 		override def engage(onComplete: Array[A] => Unit): Unit = {
 			val size = duties.size
 			val array = Array.ofDim[A](size)
-			val dutyIterator = duties.iterator
-			var completedCounter: Int = 0
-
-			@tailrec
-			def loop(index: Int): Unit = {
-				if index < size then {
+			if size == 0 then onComplete(array)
+			else {
+				val dutyIterator = duties.iterator
+				var completedCounter: Int = 0
+				var index = 0
+				while index < size do {
 					val duty = dutyIterator.next
+					val dutyIndex = index
 					duty.engagePortal { a =>
-						array(index) = a
+						array(dutyIndex) = a
 						completedCounter += 1
 						if completedCounter == size then onComplete(array)
 					}
-					loop(index + 1)
+					index += 1
 				}
 			}
-
-			loop(0)
 		}
 	}
 
@@ -1867,22 +1866,25 @@ trait Doer { thisDoer =>
 		override def engage(onComplete: Try[Array[A]] => Unit): Unit = {
 			val size = tasks.size
 			val array = Array.ofDim[A](size)
-			val taskIterator = tasks.iterator
-			var completedCounter: Int = 0
-			var index = 0
+			if size == 0 then onComplete(Success(array))
+			else {
+				val taskIterator = tasks.iterator
+				var completedCounter: Int = 0
+				var index = 0
+				while index < size do {
+					val task = taskIterator.next
+					val taskIndex = index
+					task.engagePortal {
+						case Success(a) =>
+							array(taskIndex) = a
+							completedCounter += 1
+							if completedCounter == size then onComplete(Success(array))
 
-			while index < size do {
-				val task = taskIterator.next
-				task.engagePortal {
-					case Success(a) =>
-						array(index) = a
-						completedCounter += 1
-						if completedCounter == size then onComplete(Success(array))
-
-					case failure: Failure[A] =>
-						onComplete(failure.asInstanceOf[Failure[Array[A]]])
+						case failure: Failure[A] =>
+							onComplete(failure.asInstanceOf[Failure[Array[A]]])
+					}
+					index += 1
 				}
-				index += 1
 			}
 		}
 	}
@@ -1891,18 +1893,21 @@ trait Doer { thisDoer =>
 		override def engage(onComplete: Try[Array[Try[A]]] => Unit): Unit = {
 			val size = tasks.size
 			val array = Array.ofDim[Try[A]](size)
-			val taskIterator = tasks.iterator
-			var completedCounter: Int = 0
-			var index = 0
-
-			while index < size do {
-				val task = taskIterator.next
-				task.engagePortal { tryA =>
-					array(index) = tryA
-					completedCounter += 1
-					if completedCounter == size then onComplete(Success(array))
+			if size == 0 then onComplete(Success(array))
+			else {
+				val taskIterator = tasks.iterator
+				var completedCounter: Int = 0
+				var index = 0
+				while index < size do {
+					val task = taskIterator.next
+					val taskIndex = index
+					task.engagePortal { tryA =>
+						array(taskIndex) = tryA
+						completedCounter += 1
+						if completedCounter == size then onComplete(Success(array))
+					}
+					index += 1
 				}
-				index += 1
 			}
 		}
 	}
