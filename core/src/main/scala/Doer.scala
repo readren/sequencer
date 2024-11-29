@@ -813,16 +813,40 @@ trait Doer { thisDoer =>
 
 	////////////// COVENANT ///////////////
 
-	/** A covenant to complete a [[Duty]].
-	 * The [[Duty]] that this [[Covenant]] promises to fulfill is itself. This duty is completed when this [[Covenant]] is fulfilled, either immediately by calling [[fulfill]], or after the completion of a specified duty by calling [[fulfillWith]].
+	/** A [[Duty]] that allows to subscribe/unsubscribe consumers of its result. */
+	abstract class SubscriptableDuty[+A] extends AbstractDuty[A] {
+		/**
+		 * Subscribes a consumer of the result of this [[Duty]].
+		 *
+		 * The subscription is automatically removed after this [[Duty]] is completed and the received consumer is executed.
+		 *
+		 * If this [[Duty]] is already completed when this method is called, the method executes the provided consumer synchronously and does not make a subscription.
+		 *
+		 * CAUTION: This method does not prevent duplicate subscriptions.
+		 * CAUTION: Should be called within the $DoSiThEx */
+		def subscribe(onComplete: A => Unit): Unit
+
+		/**
+		 * Removes a subscription made with [[subscribe]].
+		 *
+		 * CAUTION: Should be called within the $DoSiThEx */
+		def unsubscribe(onComplete: A => Unit): Unit
+
+		/** @return `true` if the provided consumer was already subscribed. */
+		def isAlreadySubscribed(onComplete: A => Unit): Boolean
+	}
+
+	/** A covenant to complete a [[SubscriptableDuty]].
+	 * The [[SubscriptableDuty]] that this [[Covenant]] promises to fulfill is itself. This duty is completed when this [[Covenant]] is fulfilled, either immediately by calling [[fulfill]], or after the completion of a specified duty by calling [[fulfillWith]].
+	 *
 	 * [[Covenant]] is to [[Duty]] as [[Commitment]] is to [[Task]], and as [[scala.concurrent.Promise]] is to [[scala.concurrent.Future]]
 	 * */
-	final class Covenant[A] extends AbstractDuty[A] { thisCovenant =>
+	final class Covenant[A] extends SubscriptableDuty[A] { thisCovenant =>
 		private var oResult: Maybe[A] = Maybe.empty;
 		private var onCompletedObservers: List[A => Unit] = Nil;
 
-		/** The [[Duty]] this [[Covenant]] promises to fulfill. */
-		inline def duty: Duty[A] = thisCovenant
+		/** The [[SubscriptableDuty]] this [[Covenant]] promises to fulfill. */
+		inline def subscriptableDuty: SubscriptableDuty[A] = thisCovenant
 
 		/** CAUTION: Should be called within the $DoSiThEx
 		 *  @return true if this [[Covenant]] was fulfilled; or false if it is still pending. */
@@ -832,15 +856,23 @@ trait Doer { thisDoer =>
 		 *  @return true if this [[Covenant]] is still pending; or false if it was completed. */
 		inline def isPending: Boolean = this.oResult.isEmpty;
 
-		protected override def engage(onComplete: A => Unit): Unit = {
+		protected override def engage(onComplete: A => Unit): Unit = subscribe(onComplete)
+
+		override def subscribe(onComplete: A => Unit): Unit = {
 			thisCovenant.oResult.fold {
 				thisCovenant.onCompletedObservers = onComplete :: thisCovenant.onCompletedObservers
 			}(onComplete)
 		}
 
+		override def unsubscribe(onComplete: A => Unit): Unit = {
+			onCompletedObservers = onCompletedObservers.filterNot(_ ne onComplete)
+		}
+
+		override def isAlreadySubscribed(onComplete: A => Unit): Boolean = onCompletedObservers.contains(onComplete)
+
 		/** Provokes that the [[Duty]] that this [[Covenant]] promises to complete to be completed with the received `result`.
 		 *
-		 * @param result the result that the [[task]] this [[Commitment]] promised to complete . */
+		 * @param result the result of the [[Duty]] this [[Covenant]] promised to complete . */
 		def fulfill(result: A)(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
 			queueForSequentialExecution {
 				oResult.fold {
@@ -862,12 +894,11 @@ trait Doer { thisDoer =>
 	}
 
 
-
 	///////////// TASK //////////////
 
 	abstract class AbstractTask[+A] extends Task[A]
-	
-	
+
+
 	/**
 	 * A hardy version of [[Duty]].
 	 * Advantages of [[Task]] compared to [[Duty]]:
@@ -2148,16 +2179,40 @@ trait Doer { thisDoer =>
 
 	////////////// COMMITMENT ///////////////
 
-	/** A commitment to complete a [[Task]].
-	 * The [[Task]] this [[Commitment]] promises to complete is itself. This task's will complete when this [[Commitment]] is fulfilled or broken. That could be done immediately calling [[fulfill]], [[break]], [[complete]], or in a deferred manner by calling [[completeWith]].
+	/** A [[Task]] that allows to subscribe/unsubscribe consumers of its result. */
+	abstract class SubscriptableTask[+A] extends AbstractTask[A] {
+		/**
+		 * Subscribes a consumer of the result of this [[Task]].
+		 *
+		 * The subscription is automatically removed after this [[Task]] is completed and the received consumer is executed.
+		 *
+		 * If this [[Task]] is already completed when this method is called, the method executes the provided consumer synchronously and does not make a subscription.
+		 *
+		 * CAUTION: This method does not prevent duplicate subscriptions.
+		 * CAUTION: Should be called within the $DoSiThEx */
+		def subscribe(onComplete: Try[A] => Unit): Unit
+
+		/**
+		 * Removes a subscription made with [[subscribe]].
+		 *
+		 * CAUTION: Should be called within the $DoSiThEx */
+		def unsubscribe(onComplete: Try[A] => Unit): Unit
+
+        /** @return `true` if the provided consumer was already subscribed. */
+		def isAlreadySubscribed(onComplete: Try[A] => Unit): Boolean
+	}
+
+	/** A commitment to complete a [[SubscriptableTask]].
+	 * The [[SubscriptableTask]] this [[Commitment]] promises to complete is itself. This task's will complete when this [[Commitment]] is fulfilled or broken. That could be done immediately calling [[fulfill]], [[break]], [[complete]], or in a deferred manner by calling [[completeWith]].
+	 *
 	 * Analogous to [[scala.concurrent.Promise]] but for a [[Task]] instead of a [[scala.concurrent.Future]].
 	 * */
-	final class Commitment[A] extends AbstractTask[A] { thisCommitment =>
+	final class Commitment[A] extends SubscriptableTask[A] { thisCommitment =>
 		private var oResult: Maybe[Try[A]] = Maybe.empty;
 		private var onCompletedObservers: List[Try[A] => Unit] = Nil;
 
-		/** The [[Task]] this [[Commitment]] promises to fulfill. */
-		inline def task: Task[A] = thisCommitment
+		/** The [[SubscriptableTask]] this [[Commitment]] promises to fulfill. */
+		inline def subscriptableTask: SubscriptableTask[A] = thisCommitment
 
 		/** CAUTION: should be called within the $DoSiThEx
 		 * @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
@@ -2173,9 +2228,21 @@ trait Doer { thisDoer =>
 			}(onComplete)
 		}
 
-		/** Provokes that the [[task]] that this [[Commitment]] promises to complete to be completed with the received `result`.
+		override def subscribe(onComplete: Try[A] => Unit): Unit = {
+			thisCommitment.oResult.fold {
+				thisCommitment.onCompletedObservers = onComplete :: thisCommitment.onCompletedObservers
+			}(onComplete)
+		}
+
+		override def unsubscribe(onComplete: Try[A] => Unit): Unit = {
+			onCompletedObservers = onCompletedObservers.filterNot(_ ne onComplete)
+		}
+
+		override def isAlreadySubscribed(onComplete: Try[A] => Unit): Boolean = onCompletedObservers.contains(onComplete)
+
+		/** Provokes that the [[subscriptableTask]] that this [[Commitment]] promises to complete to be completed with the received `result`.
 		 *
-		 * @param result the result that the [[task]] this [[Commitment]] promised to complete . */
+		 * @param result the result that the [[subscriptableTask]] this [[Commitment]] promised to complete . */
 		def complete(result: Try[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
 			queueForSequentialExecution {
 				oResult.fold {
@@ -2194,13 +2261,13 @@ trait Doer { thisDoer =>
 			this;
 		}
 
-		/** Provokes that the [[task]] this [[Commitment]] promises to complete to be fulfilled (completed successfully) with the received `result`. */
+		/** Provokes that the [[subscriptableTask]] this [[Commitment]] promises to complete to be fulfilled (completed successfully) with the received `result`. */
 		def fulfill(result: A)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Success(result))(onAlreadyCompleted);
 
-		/** Provokes that the [[task]] this [[Commitment]] promises to complete to be broken (completed with failure) with the received `cause`. */
+		/** Provokes that the [[subscriptableTask]] this [[Commitment]] promises to complete to be broken (completed with failure) with the received `cause`. */
 		def break(cause: Throwable)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Failure(cause))(onAlreadyCompleted);
 
-		/** Programs the completion of the [[task]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
+		/** Programs the completion of the [[subscriptableTask]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
 		def completeWith(otherTask: Task[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
 			if (otherTask ne this)
 				otherTask.trigger()(result => complete(result)(onAlreadyCompleted));
