@@ -24,6 +24,12 @@ object Doer {
 		 * */
 		def queueForSequentialExecution(runnable: Runnable): Unit
 
+		/** The implementation should return the [[Assistant]] corresponding to the DoSiThEx corresponding to the current [[java.lang.Thread]] or null if the current [[java.lang.Thread]] corresponds to no assistant. */
+		def current: Assistant
+		
+		/** @return true if the current [[java.lang.Thread]] does corresponds to the DoSiThEx of this [[Assistant]]; or false otherwise. */
+		inline def isCurrentAssistant: Boolean = this eq current 
+
 		/**
 		 * The implementation should report the received [[Throwable]] somehow. Preferably including a description that identifies the provider of the DoSiThEx used by [[queueForSequentialExecution]] and mentions that the error was thrown by a deferred procedure programmed by means of a [[Task]].
 		 * The implementation should not throw non-fatal exceptions.
@@ -88,8 +94,8 @@ trait Doer { thisDoer =>
 	/////////////// DUTY ///////////////
 
 	abstract class AbstractDuty[+A] extends Duty[A]
-	
-	
+
+
 	/**
 	 * Encapsulates one or more chained actions and provides operations to declaratively build complex duties from simpler ones.
 	 * This tool eliminates the need for state variables that determine the decision-making flow, as the code structure itself indicates the execution order.
@@ -850,45 +856,63 @@ trait Doer { thisDoer =>
 
 		/** CAUTION: Should be called within the $DoSiThEx
 		 *  @return true if this [[Covenant]] was fulfilled; or false if it is still pending. */
-		inline def isCompleted: Boolean = this.oResult.isDefined;
+		inline def isCompleted: Boolean = {
+			assert(assistant.isCurrentAssistant)
+			this.oResult.isDefined
+		}
 
 		/** CAUTION: Should be called within the $DoSiThEx
 		 *  @return true if this [[Covenant]] is still pending; or false if it was completed. */
-		inline def isPending: Boolean = this.oResult.isEmpty;
+		inline def isPending: Boolean = {
+			assert(assistant.isCurrentAssistant)
+			this.oResult.isEmpty
+		}
 
 		protected override def engage(onComplete: A => Unit): Unit = subscribe(onComplete)
 
 		override def subscribe(onComplete: A => Unit): Unit = {
+			assert(assistant.isCurrentAssistant)
 			thisCovenant.oResult.fold {
 				thisCovenant.onCompletedObservers = onComplete :: thisCovenant.onCompletedObservers
 			}(onComplete)
 		}
 
 		override def unsubscribe(onComplete: A => Unit): Unit = {
+			assert(assistant.isCurrentAssistant)
 			onCompletedObservers = onCompletedObservers.filterNot(_ ne onComplete)
 		}
 
-		override def isAlreadySubscribed(onComplete: A => Unit): Boolean = onCompletedObservers.contains(onComplete)
+		override def isAlreadySubscribed(onComplete: A => Unit): Boolean = {
+			assert(assistant.isCurrentAssistant)
+			onCompletedObservers.contains(onComplete)
+		}
 
 		/** Provokes that the [[Duty]] that this [[Covenant]] promises to complete to be completed with the received `result`.
 		 *
 		 * @param result the result of the [[Duty]] this [[Covenant]] promised to complete . */
 		def fulfill(result: A)(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
-			queueForSequentialExecution {
-				oResult.fold {
-					this.oResult = Maybe.some(result);
-					this.onCompletedObservers.foreach(_(result));
-					// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
-					this.onCompletedObservers = Nil
-				}(onAlreadyCompleted)
-			};
+			queueForSequentialExecution(fulfillHere(result)(onAlreadyCompleted))
 			this;
 		}
 
+		/** Provokes that the [[Duty]] that this [[Covenant]] promises to complete to be completed with the received `result`.
+		 * CAUTION: Should be called within the $DoSiThEx
+		 * @param result the result of the [[Duty]] this [[Covenant]] promised to complete . */
+		def fulfillHere(result: A)(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
+			assert(assistant.isCurrentAssistant)
+			oResult.fold {
+				this.oResult = Maybe.some(result);
+				this.onCompletedObservers.foreach(_(result));
+				// Clean the observers list to help the garbage collector.
+				this.onCompletedObservers = Nil
+			}(onAlreadyCompleted)
+			this
+		}
+
 		/** Triggers the execution of the specified [[Duty]] and completes the [[Duty]] that this [[Covenant]] promises to fulfill with the result of the specified duty once it finishes. */
-		def fulfillWith(dutyA: Duty[A])(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
+		def fulfillWith(dutyA: Duty[A], isRunningInDoSiThEx: Boolean = false)(onAlreadyCompleted: A => Unit = _ => ()): this.type = {
 			if (dutyA ne this)
-				dutyA.trigger()(result => fulfill(result)(onAlreadyCompleted));
+				dutyA.trigger(isRunningInDoSiThEx)(result => fulfillHere(result)(onAlreadyCompleted));
 			this
 		}
 	}
@@ -2198,7 +2222,7 @@ trait Doer { thisDoer =>
 		 * CAUTION: Should be called within the $DoSiThEx */
 		def unsubscribe(onComplete: Try[A] => Unit): Unit
 
-        /** @return `true` if the provided consumer was already subscribed. */
+		/** @return `true` if the provided consumer was already subscribed. */
 		def isAlreadySubscribed(onComplete: Try[A] => Unit): Boolean
 	}
 
@@ -2216,11 +2240,17 @@ trait Doer { thisDoer =>
 
 		/** CAUTION: should be called within the $DoSiThEx
 		 * @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
-		def isCompleted: Boolean = this.oResult.isDefined;
+		def isCompleted: Boolean = {
+			assert(assistant.isCurrentAssistant)
+			this.oResult.isDefined
+		}
 
 		/** CAUTION: should be called within the $DoSiThEx
 		 * @return true if this [[Commitment]] is still pending; or false if it was completed. */
-		def isPending: Boolean = this.oResult.isEmpty;
+		def isPending: Boolean = {
+			assert(assistant.isCurrentAssistant)
+			this.oResult.isEmpty
+		}
 
 		protected override def engage(onComplete: Try[A] => Unit): Unit = {
 			thisCommitment.oResult.fold {
@@ -2229,48 +2259,71 @@ trait Doer { thisDoer =>
 		}
 
 		override def subscribe(onComplete: Try[A] => Unit): Unit = {
+			assert(assistant.isCurrentAssistant)
 			thisCommitment.oResult.fold {
 				thisCommitment.onCompletedObservers = onComplete :: thisCommitment.onCompletedObservers
 			}(onComplete)
 		}
 
 		override def unsubscribe(onComplete: Try[A] => Unit): Unit = {
+			assert(assistant.isCurrentAssistant)
 			onCompletedObservers = onCompletedObservers.filterNot(_ ne onComplete)
 		}
 
-		override def isAlreadySubscribed(onComplete: Try[A] => Unit): Boolean = onCompletedObservers.contains(onComplete)
+		override def isAlreadySubscribed(onComplete: Try[A] => Unit): Boolean = {
+			assert(assistant.isCurrentAssistant)
+			onCompletedObservers.contains(onComplete)
+		}
 
 		/** Provokes that the [[subscriptableTask]] that this [[Commitment]] promises to complete to be completed with the received `result`.
 		 *
 		 * @param result the result that the [[subscriptableTask]] this [[Commitment]] promised to complete . */
 		def complete(result: Try[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
-			queueForSequentialExecution {
-				oResult.fold {
-					this.oResult = Maybe.some(result);
-					this.onCompletedObservers.foreach(_(result));
-					// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
-					this.onCompletedObservers = Nil
-				} { value =>
-					try onAlreadyCompleted(value)
-					catch {
-						case NonFatal(cause) => reportFailure(cause)
-					}
-
-				}
-			};
+			queueForSequentialExecution(completeHere(result)(onAlreadyCompleted))
 			this;
 		}
 
+		/** Provokes that the [[subscriptableTask]] that this [[Commitment]] promises to complete to be completed with the received `result`.
+		 *
+		 * Caution: Should be called within the $DoSiThEx
+		 * @param result the result that the [[subscriptableTask]] this [[Commitment]] promised to complete . */
+		def completeHere(result: Try[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
+			assert(assistant.isCurrentAssistant)
+			oResult.fold {
+				this.oResult = Maybe.some(result);
+				this.onCompletedObservers.foreach(_(result));
+				// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
+				this.onCompletedObservers = Nil
+			} { value =>
+				try onAlreadyCompleted(value)
+				catch {
+					case NonFatal(cause) => reportFailure(cause)
+				}
+
+			}
+			this;
+		}
+
+
 		/** Provokes that the [[subscriptableTask]] this [[Commitment]] promises to complete to be fulfilled (completed successfully) with the received `result`. */
-		def fulfill(result: A)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Success(result))(onAlreadyCompleted);
+		def fulfill(result: A, isRunningInDoSiThEx: Boolean = false)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type =
+			if isRunningInDoSiThEx then {
+				assert(assistant.isCurrentAssistant)
+				completeHere(Success(result))(onAlreadyCompleted)
+			} else this.complete(Success(result))(onAlreadyCompleted)
 
 		/** Provokes that the [[subscriptableTask]] this [[Commitment]] promises to complete to be broken (completed with failure) with the received `cause`. */
-		def break(cause: Throwable)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = this.complete(Failure(cause))(onAlreadyCompleted);
+		def break(cause: Throwable, isRunningInDoSiThEx: Boolean = false)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
+			if isRunningInDoSiThEx then {
+				assert(assistant.isCurrentAssistant)
+				completeHere(Failure(cause))(onAlreadyCompleted)
+			} else this.complete(Failure(cause))(onAlreadyCompleted)
+		}
 
 		/** Programs the completion of the [[subscriptableTask]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
-		def completeWith(otherTask: Task[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
+		def completeWith(otherTask: Task[A], isRunningInDoSiThEx: Boolean = false)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
 			if (otherTask ne this)
-				otherTask.trigger()(result => complete(result)(onAlreadyCompleted));
+				otherTask.trigger(isRunningInDoSiThEx)(result => completeHere(result)(onAlreadyCompleted));
 			this
 		}
 	}

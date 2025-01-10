@@ -14,38 +14,43 @@ object ActorBasedDoer {
 		def scheduler: Scheduler
 	}
 
+	private val currentAssistant: ThreadLocal[Aide] = new ThreadLocal()
+	
 	private[taskflow] case class Procedure(runnable: Runnable)
 
-	def setup[A: Typeable](frontier: (ActorContext[A], ActorBasedDoer) => Behavior[A]): Behavior[A] = {
-		val behaviorA = Behaviors.setup[A] { ctx =>
-			// TODO analyze if is it OK to upcast the ActorContext in this situation?
-			val doer: ActorBasedDoer = new ActorBasedDoer(buildAide(ctx.asInstanceOf[ActorContext[Procedure]]));
-			frontier(ctx, doer)
-		}
-
-		Behaviors.intercept(procedureInterceptor)(behaviorA).narrow[A]
-	}
-
 	def setup[A: Typeable](ctxA: ActorContext[A])(frontier: ActorBasedDoer => Behavior[A]): Behavior[A] = {
-		val doer: ActorBasedDoer = new ActorBasedDoer(buildAide(ctxA.asInstanceOf[ActorContext[Procedure]]));
+		val aide = buildAide(ctxA.asInstanceOf[ActorContext[Procedure]])
+		val doer: ActorBasedDoer = new ActorBasedDoer(aide);
 		val behaviorA = frontier(doer)
-		Behaviors.intercept(procedureInterceptor)(behaviorA).narrow
+		val interceptor = buildProcedureInterceptor[A](aide)
+		Behaviors.intercept(() => interceptor)(behaviorA).narrow
 	}
 
 
 	private[taskflow] def buildAide[A >: Procedure](ctx: ActorContext[A]): Aide = new Aide {
 		override def queueForSequentialExecution(runnable: Runnable): Unit = ctx.self ! Procedure(runnable)
 
+		override def current: Aide = currentAssistant.get
+
 		override def reportFailure(cause: Throwable): Unit = ctx.log.error("""Error occurred while the actor "{}" was executing a Runnable within a Task.""", ctx.self, cause)
 		
 		override def scheduler: Scheduler = ctx.system.scheduler
 	}
 
-	private[taskflow] def procedureInterceptor[A: Typeable](): BehaviorInterceptor[A | Procedure, A] =
-		new BehaviorInterceptor[Procedure, A](classOf[Procedure]) {
-			override def aroundReceive(ctxU: TypedActorContext[Procedure], procedure: Procedure, target: BehaviorInterceptor.ReceiveTarget[A]): Behavior[A] = {
-				procedure.runnable.run();
-				Behaviors.same // TODO: analyze if returning `same` may cause problems in edge cases
+	private[taskflow] def buildProcedureInterceptor[A](aide: Aide): BehaviorInterceptor[A | Procedure, A] =
+		new BehaviorInterceptor[Any, A](classOf[Any]) {
+			override def aroundReceive(ctxU: TypedActorContext[Any], message: Any, target: BehaviorInterceptor.ReceiveTarget[A]): Behavior[A] = {
+				currentAssistant.set(aide)
+				try {
+					message match {
+						case procedure: Procedure =>
+							procedure.runnable.run()
+							Behaviors.same // TODO: analyze if returning `same` may cause problems in edge cases
+							
+						case a: A @unchecked =>
+							target(ctxU, a)
+					}
+				} finally currentAssistant.remove()
 			}
 		}.asInstanceOf[BehaviorInterceptor[A | Procedure, A]]
 }

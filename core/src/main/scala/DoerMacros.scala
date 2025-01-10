@@ -3,7 +3,6 @@ package readren.taskflow
 import Doer.Assistant
 
 import scala.quoted.{Expr, Quotes, Type}
-import scala.util.Try
 
 object DoerMacros {
 
@@ -26,12 +25,18 @@ object DoerMacros {
 
 		isRunningInDoSiThExExpr.value match {
 			case Some(isRunningInDoSiThEx) =>
-				if isRunningInDoSiThEx then '{ $dutyExpr.engagePortal($onCompleteExpr) }
+				if isRunningInDoSiThEx then '{
+					assert($assistantExpr.isCurrentAssistant, s"The current thread does not correspond to this doer's assistant: this=${$assistantExpr}, current=${$assistantExpr.current}")
+					$dutyExpr.engagePortal($onCompleteExpr)
+				}
 				else '{ $assistantExpr.queueForSequentialExecution($runnable) }
 
 			case None =>
 				'{
-					if $isRunningInDoSiThExExpr then $dutyExpr.engagePortal($onCompleteExpr)
+					if $isRunningInDoSiThExExpr then {
+						assert($assistantExpr.isCurrentAssistant, s"The current thread does not correspond to this doer's assistant: this=${$assistantExpr}, current=${$assistantExpr.current}")
+						$dutyExpr.engagePortal($onCompleteExpr)
+					}
 					else $assistantExpr.queueForSequentialExecution($runnable)
 				}
 		}

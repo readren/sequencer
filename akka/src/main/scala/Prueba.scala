@@ -108,8 +108,8 @@ object Prueba {
 
 	def apply30(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			ActorBasedDoer.setup[Pregunta](ctx) { taskContext =>
-				import taskContext.*
+			ActorBasedDoer.setup[Pregunta](ctx) { doer =>
+				import doer.*
 
 				Behaviors.receiveMessage {
 					case Pregunta(replyTo1, "Hola") =>
@@ -126,8 +126,8 @@ object Prueba {
 
 	def apply31(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			ActorBasedDoer.setup[Pregunta](ctx) { taskContext =>
-				import taskContext.*
+			ActorBasedDoer.setup[Pregunta](ctx) { doer =>
+				import doer.*
 
 				val flow = Flow.wrap[ActorRef[Respuesta], Try[Unit]] { replyTo1 =>
 					for {
@@ -146,8 +146,8 @@ object Prueba {
 	
 	def apply4(): Behavior[Pregunta] = {
 		Behaviors.setup { ctx =>
-			ActorBasedDoer.setup[Pregunta](ctx) { taskContext =>
-				import taskContext.*
+			ActorBasedDoer.setup[Pregunta](ctx) { doer =>
+				import doer.*
 
 				val paso2 = Behaviors.receiveMessage[Pregunta] {
 					case Pregunta(replyTo2, "¿Qué tal?") =>
@@ -157,12 +157,18 @@ object Prueba {
 						} yield ()
 						task.trigger(true)(rf => ctx.log.info(s"resultado final: $rf"))
 						Behaviors.same
+						
+					case x => println(s"unhandled message: $x")
+						Behaviors.unhandled
 				}
 
 				val paso1 = Behaviors.receiveMessage[Pregunta] {
 					case Pregunta(replyTo1, "Hola") =>
 						replyTo1 ! Respuesta(ctx.self, "Hola también")
 						paso2
+						
+					case x => println(s"unhandled message: $x")
+						Behaviors.unhandled
 				}
 
 				paso1

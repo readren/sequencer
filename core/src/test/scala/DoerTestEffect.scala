@@ -1,6 +1,7 @@
 package readren.taskflow
 
 import Doer.ExceptionReport
+import DoerTestEffect.currentAssistant
 
 import munit.ScalaCheckEffectSuite
 import org.scalacheck.Arbitrary
@@ -15,6 +16,10 @@ import scala.concurrent.{Await, Future}
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
+object DoerTestEffect {
+	val currentAssistant: ThreadLocal[Doer.Assistant] = new ThreadLocal()
+}
+
 class DoerTestEffect extends ScalaCheckEffectSuite {
 
 	/** Remembers the exceptions that were unhandled in the DoSiThEx's thread.
@@ -22,7 +27,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	private val unhandledExceptions = mutable.Set.empty[String]
 	private val reportedExceptions = mutable.Set.empty[String]
 
-	private val theAssistant = new Doer.Assistant {
+	private val theAssistant = new Doer.Assistant { thisAssistant => 
 		private val doSiThEx = Executors.newSingleThreadExecutor()
 
 		private val sequencer: AtomicInteger = new AtomicInteger(0)
@@ -31,6 +36,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 			val id = sequencer.addAndGet(1)
 			// println(s"queuedForSequentialExecution: pre execute; id=$id, thread=${Thread.currentThread().getName}; runnable=$runnable")
 			doSiThEx.execute(() => {
+				currentAssistant.set(thisAssistant)
 				// println(s"queuedForSequentialExecution: pre run; id=$id; thread=${Thread.currentThread().getName}")
 				try {
 					runnable.run()
@@ -42,10 +48,13 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 						unhandledExceptions.addOne(cause.getMessage);
 						throw cause;
 				} finally {
+					currentAssistant.remove()
 					// println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
 				}
 			})
 		}
+
+		override def current: Doer.Assistant = currentAssistant.get
 
 		override def reportFailure(failure: Throwable): Unit = {
 			// println(s"Reporting failure to munit: ${failure.getMessage}")

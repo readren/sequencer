@@ -1,5 +1,7 @@
 package readren.taskflow
 
+import DoerTestSync.currentAssistant
+
 import org.scalacheck.{Arbitrary, Gen}
 import org.scalatest.compatible.Assertion
 import org.scalatest.freespec.AnyFreeSpec
@@ -9,6 +11,10 @@ import org.scalatestplus.scalacheck.ScalaCheckPropertyChecks
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
+object DoerTestSync {
+	val currentAssistant: ThreadLocal[Doer.Assistant] = new ThreadLocal()
+}
+
 /** This suite is limited to synchronous tests and therefore it only tests part of the behavior of [[Doer]].
  * All the behavior tested in this suite is also tested in the [[DoerTestEffect]] suite. 
  * This suite is kept despite the [[DoerTestEffect]] existence because it is easier to debug in a synchronous environment.
@@ -16,14 +22,18 @@ import scala.util.{Failure, Success, Try}
 class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matchers {
 
 	private var oDoerThreadId: Option[Long] = None
-	private val theAssistant = new Doer.Assistant {
+	private val theAssistant = new Doer.Assistant { thisAssistant =>
 		override def queueForSequentialExecution(runnable: Runnable): Unit = {
 			oDoerThreadId match {
 				case None => oDoerThreadId = Some(Thread.currentThread().getId)
 				case Some(doerThreadId) => assert(doerThreadId == Thread.currentThread().getId)
 			}
-			runnable.run()
+			currentAssistant.set(thisAssistant)
+			try runnable.run()
+			finally currentAssistant.remove()
 		}
+
+		override def current: Doer.Assistant = currentAssistant.get
 
 		override def reportFailure(cause: Throwable): Unit = throw cause
 	}
@@ -36,12 +46,12 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 	import Task.*
 
 	val shared = new DoerTestShared[doer.type](doer, true)
-	import shared.{given, *}
+	import shared.{*, given}
 
 	private def checkEquality[A](task1: Task[A], task2: Task[A]): Unit = {
 		combine(task1, task2) {
 			(a1, a2) => Success((a1, a2))
-		}.trigger(true) {
+		}.trigger() {
 			case Success(z) => assert(z._1 ==== z._2)
 			case Failure(cause) => throw cause
 		}

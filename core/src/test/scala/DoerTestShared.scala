@@ -1,10 +1,16 @@
 package readren.taskflow
 
+import DoerTestShared.currentAssistant
+
 import org.scalacheck.{Arbitrary, Gen}
 
 import java.util.concurrent.{ExecutorService, Executors}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
+
+object DoerTestShared {
+	val currentAssistant: ThreadLocal[Doer.Assistant] = new ThreadLocal()
+}
 
 /** Contains tools used by the suites that test [[Doer]] behavior. */
 class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false) {
@@ -12,10 +18,16 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 	import doer.*
 
 	val foreignDoer: Doer = {
-		val foreignAssistant: Doer.Assistant = new Doer.Assistant {
+		val foreignAssistant: Doer.Assistant = new Doer.Assistant { thisAssistant => 
 			private val executor = Executors.newSingleThreadExecutor()
 
-			override def queueForSequentialExecution(runnable: Runnable): Unit = executor.execute(runnable)
+			override def queueForSequentialExecution(runnable: Runnable): Unit = executor.execute { () =>
+				currentAssistant.set(thisAssistant)
+				try runnable.run()
+				finally currentAssistant.remove()
+			}
+
+			override def current: Doer.Assistant = currentAssistant.get
 
 			override def reportFailure(cause: Throwable): Unit = throw cause
 		}

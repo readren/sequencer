@@ -12,27 +12,22 @@ import scala.reflect.Typeable
 object ActorBasedTimedDoer {
 	trait TimedAide extends ActorBasedDoer.Aide, TimersExtension.Assistant
 
-	def setup[A: Typeable](frontier: (ActorContext[A], ActorBasedTimedDoer) => Behavior[A]): Behavior[A] = {
-		val behaviorA = Behaviors.setup[A] { ctxA =>
-		  	Behaviors.withTimers { timerScheduler =>
-				val Doer: ActorBasedTimedDoer = new ActorBasedTimedDoer(buildTimedAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]]));
-				frontier(ctxA, Doer)
-			}
-		}
-
-		Behaviors.intercept(ActorBasedDoer.procedureInterceptor)(behaviorA).narrow[A]
-	}
-
+	private val currentTimedAide: ThreadLocal[TimedAide] = new ThreadLocal()
+	
 	def setup[A: Typeable](ctxA: ActorContext[A], timerScheduler: TimerScheduler[A])(frontier: ActorBasedTimedDoer => Behavior[A]): Behavior[A] = {
-		val doer: ActorBasedTimedDoer = new ActorBasedTimedDoer(buildTimedAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]]));
+		val aide = buildTimedAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]])
+		val doer: ActorBasedTimedDoer = new ActorBasedTimedDoer(aide);
 		val behaviorA = frontier(doer)
-		Behaviors.intercept(ActorBasedDoer.procedureInterceptor)(behaviorA).narrow
+		val interceptor = ActorBasedDoer.buildProcedureInterceptor[A](aide)
+		Behaviors.intercept(() => interceptor)(behaviorA).narrow
 	}
 
 	private def buildTimedAide[A >: Procedure](ctx: ActorContext[A], timerScheduler: TimerScheduler[A]): TimedAide = {
 		val aide = ActorBasedDoer.buildAide(ctx)
 		new TimedAide {
 			override def queueForSequentialExecution(runnable: Runnable): Unit = aide.queueForSequentialExecution(runnable)
+
+			override def current: TimedAide = currentTimedAide.get
 
 			override def reportFailure(cause: Throwable): Unit = aide.reportFailure(cause)
 

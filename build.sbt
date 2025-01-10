@@ -1,6 +1,6 @@
-ThisBuild / version := "0.1.8-SNAPSHOT"
+ThisBuild / version := "0.1.9-SNAPSHOT"
 
-ThisBuild / scalaVersion := "3.5.2"
+ThisBuild / scalaVersion := "3.6.2"
 
 val AkkaVersion = "2.9.5"
 
@@ -45,7 +45,7 @@ lazy val root = (project in file("."))
 	)
 
 ThisBuild / scalacOptions ++= Seq(
-	"-experimental",
+	"-experimental", // required because "ToolsMacro.scala" uses the method [[Symbol.info]] which is experimental.
 	"-deprecation",
 	"-feature",
 	"-explain",
