@@ -24,11 +24,13 @@ object Doer {
 		 * */
 		def queueForSequentialExecution(runnable: Runnable): Unit
 
-		/** The implementation should return the [[Assistant]] corresponding to the DoSiThEx corresponding to the current [[java.lang.Thread]] or null if the current [[java.lang.Thread]] corresponds to no assistant. */
+		/** The implementation should return the [[Assistant]] instance corresponding to the DoSiThEx corresponding to the current [[java.lang.Thread]] if it knows it, or null if it doesn't.
+		 * The implementation should know, at least, if the current [[java.lang.Thread]] corresponds to this [[Assistant]], and return this instance in that case. */
 		def current: Assistant
-		
-		/** @return true if the current [[java.lang.Thread]] does corresponds to the DoSiThEx of this [[Assistant]]; or false otherwise. */
-		inline def isCurrentAssistant: Boolean = this eq current 
+
+		/**
+		 * @return true if the current [[java.lang.Thread]] does corresponds to the DoSiThEx of this [[Assistant]]; or false otherwise. */
+		def isCurrentAssistant: Boolean = this eq current
 
 		/**
 		 * The implementation should report the received [[Throwable]] somehow. Preferably including a description that identifies the provider of the DoSiThEx used by [[queueForSequentialExecution]] and mentions that the error was thrown by a deferred procedure programmed by means of a [[Task]].
@@ -62,7 +64,7 @@ abstract class AbstractDoer extends Doer
  */
 trait Doer { thisDoer =>
 
-	protected val assistant: Doer.Assistant
+	val assistant: Doer.Assistant
 
 	/**
 	 * Queues the execution of the received [[Runnable]] in this $DoSiThEx. See [[Doer.Assistant.queueForSequentialExecution]]

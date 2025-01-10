@@ -7,12 +7,11 @@ import munit.ScalaCheckEffectSuite
 import org.scalacheck.Arbitrary
 import org.scalacheck.effect.PropF
 
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.{Executors, TimeUnit}
 import scala.collection.mutable
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Future
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
@@ -68,7 +67,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	}
 
 	private val doer: Doer = new Doer {
-		override protected val assistant: Doer.Assistant = theAssistant
+		override val assistant: Doer.Assistant = theAssistant
 	}
 
 	import doer.*

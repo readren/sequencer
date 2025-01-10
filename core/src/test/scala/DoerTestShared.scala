@@ -32,7 +32,7 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 			override def reportFailure(cause: Throwable): Unit = throw cause
 		}
 		new Doer {
-			override protected val assistant: Doer.Assistant = foreignAssistant
+			override val assistant: Doer.Assistant = foreignAssistant
 		}
 	}
 

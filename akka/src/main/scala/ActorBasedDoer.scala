@@ -57,7 +57,7 @@ object ActorBasedDoer {
 
 class ActorBasedDoer(anAssistant: ActorBasedDoer.Aide) extends Doer {
 
-	override protected val assistant: ActorBasedDoer.Aide = anAssistant
+	override val assistant: ActorBasedDoer.Aide = anAssistant
 
 	extension [A](target: ActorRef[A]) {
 		def say(message: A): Task[Unit] = Task.mine(() => target ! message)

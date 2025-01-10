@@ -39,7 +39,7 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 	}
 
 	val doer: Doer = new Doer {
-		override protected val assistant: Doer.Assistant = theAssistant
+		override val assistant: Doer.Assistant = theAssistant
 	}
 
 	import doer.*
