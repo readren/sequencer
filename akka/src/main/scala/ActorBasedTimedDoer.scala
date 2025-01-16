@@ -41,4 +41,6 @@ object ActorBasedTimedDoer {
 }
 
 
-class ActorBasedTimedDoer(assistant: ActorBasedTimedDoer.TimedAide) extends ActorBasedDoer(assistant), TimersExtension(assistant)
+class ActorBasedTimedDoer(timedAide: ActorBasedTimedDoer.TimedAide) extends ActorBasedDoer(timedAide), TimersExtension {
+	override val timedAssistant: ActorBasedTimedDoer.TimedAide = timedAide
+}

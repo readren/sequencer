@@ -122,10 +122,12 @@ trait Doer { thisDoer =>
 		 *
 		 * The implementation may assume this method is invoked within the $DoSiThEx.
 		 *
-		 * Any non-fatal exceptions thrown by this method must be caught, except those thrown by the  provided callback.
-		 * If a non-fatal exception originates from a routine passed in the class constructor, including those captured over a closure, it should either be propagated to the task's result or reported using [[Doer.assistant.reportFailure]] if propagation is not feasible.
-		 *
-		 * It is critical to note that exceptions thrown by the callback should never be caught.
+		 * The implementation must respect the following exception-handling rules:
+		 * - no exception thrown by the provided callback must be caught.
+		 * - any other non-fatal exception throw by this method must be caught and propagated to the result or reported using [[Doer.assistant.reportFailure]] if propagation is not feasible.
+		 * In the case of [[Task]] this includes non-fatal exceptions originated from routines passed in the class constructor that this method executes, including those captured over a closure.
+		 * [[Duty]], on the other hand, assumes that these routines never throw exceptions. If an exception is thrown, the stack of the corresponding task will be completely unwound. 
+		 * It is crucial to ensure that exceptions thrown by the onComplete callback are not caught, as this could suppress issues within the callback, preventing the execution of code expected to run and making it extremely difficult to diagnose the cause of a never-completing [[Duty]] or [[Task]].
 		 *
 		 * This method is the sole primitive operation of this trait; all other methods are derived from it.
 		 *
@@ -330,7 +332,16 @@ trait Doer { thisDoer =>
 	}
 
 	object Duty {
-		val never: Duty[Nothing] = NotEver
+
+		/** Creates a [[Duty]] that returns the [[Unit]] instance when executed. */
+		inline def unit: Duty[Unit] = Duty.ready(())
+
+		/** Creates a [[Duty]] whose execution never ends.
+		 * $threadSafe
+		 *
+		 * @return a [[Duty]] whose execution never ends.
+		 * */
+		inline def never: Duty[Nothing] = NotEver
 
 		/** Creates a [[Duty]] whose result is calculated at the call site even before the duty is constructed.
 		 * $threadSafe
@@ -1147,11 +1158,11 @@ trait Doer { thisDoer =>
 		 * Repeats this task until applying the received function yields [[Maybe.some]].
 		 * ===Detailed description===
 		 * Creates a [[Task]] that, when executed, it will:
-		 * - execute this task producing the result `tryA`
-		 * - apply `condition` to `(completedCycles, tryA)`. If the evaluation finishes:
-		 * 		- abruptly, completes with the cause.
-		 * 		- normally with `some(tryB)`, completes with `tryB`
-		 * 		- normally with `empty`, goes back to the first step.
+		 *		- execute this task producing the result `tryA`
+		 *		- apply `condition` to `(completedCycles, tryA)`. If the evaluation finishes:
+		 * 			- abruptly, completes with the cause.
+		 * 			- normally with `some(tryB)`, completes with `tryB`
+		 * 			- normally with `empty`, goes back to the first step.
 		 *
 		 * $threadSafe
 		 *
@@ -1171,12 +1182,12 @@ trait Doer { thisDoer =>
 		 * Creates a new [[Task]] that is executed repeatedly until either it fails or applying a condition to: its result and the number of already completed cycles, yields [[Maybe.some]].
 		 * ===Detailed description===
 		 * Creates a [[Task]] that, when executed, it will:
-		 * - execute this task and, if its results is:
-		 * 		- `Failure(cause)`, completes with the same failure.
-		 * 		- `Success(a)`, applies the `condition` to `(completedCycles, a)`. If the evaluation finishes:	
-		 * 			- abruptly, completes with the cause.
-		 * 			- normally with `some(tryB)`, completes with `tryB`
-		 * 			- normally with `empty`, goes back to the first step.
+		 *		- execute this task and, if its results is:
+		 * 			- `Failure(cause)`, completes with the same failure.
+		 * 			- `Success(a)`, applies the `condition` to `(completedCycles, a)`. If the evaluation finishes:
+		 * 				- abruptly, completes with the cause.
+		 * 				- normally with `some(tryB)`, completes with `tryB`
+		 * 				- normally with `empty`, goes back to the first step.
 		 *
 		 * $threadSafe
 		 *
@@ -1275,13 +1286,15 @@ trait Doer { thisDoer =>
 
 	object Task {
 
+		/** Creates a [[Task]] that returns the [[Unit]] instance when executed. */
+		inline def unit: Task[Unit] = successful(())
+
 		/** Creates a [[Task]] whose execution never ends.
-		 *
 		 * $threadSafe
 		 *
-		 * @return the task described in the method description.
+		 * @return a [[Task]] whose execution never ends.
 		 * */
-		val never: Task[Nothing] = Never
+		inline def never: Task[Nothing] = Never
 
 		/** Creates a [[Task]] whose result is calculated at the call site even before the task is constructed.  The result of its execution is always the provided value.
 		 *

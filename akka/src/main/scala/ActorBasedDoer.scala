@@ -3,7 +3,7 @@ package readren.taskflow.akka
 import akka.actor.typed.*
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import akka.util.Timeout
-import readren.taskflow.Doer
+import readren.taskflow.{AbstractDoer, Doer}
 
 import scala.reflect.Typeable
 import scala.util.{Failure, Success}
@@ -55,9 +55,9 @@ object ActorBasedDoer {
 		}.asInstanceOf[BehaviorInterceptor[A | Procedure, A]]
 }
 
-class ActorBasedDoer(anAssistant: ActorBasedDoer.Aide) extends Doer {
+class ActorBasedDoer(aide: ActorBasedDoer.Aide) extends AbstractDoer {
 
-	override val assistant: ActorBasedDoer.Aide = anAssistant
+	override val assistant: ActorBasedDoer.Aide = aide
 
 	extension [A](target: ActorRef[A]) {
 		def say(message: A): Task[Unit] = Task.mine(() => target ! message)
