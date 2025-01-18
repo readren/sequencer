@@ -349,7 +349,7 @@ trait Doer { thisDoer =>
 		 * @param a the already calculated result of the returned [[Duty]]. */
 		inline def ready[A](a: A): Duty[A] = new Ready(a)
 
-		/** Creates a [[Duty]] whose result is calculated withing the $DoSiThEx.
+		/** Creates a [[Duty]] whose result is the value returned by the provided supplier.
 		 * ===Detailed behavior===
 		 * Creates a duty that, when executed, evaluates the `supplier` within the $DoSiThEx. If the evaluation finishes:
 		 *		- abruptly, will never complete.
@@ -362,8 +362,8 @@ trait Doer { thisDoer =>
 		 */
 		inline def mine[A](supplier: () => A): Duty[A] = new Mine(supplier)
 
-		/** Creates a [[Duty]] that evaluates the specified duty supplier withing the $DoSiThEx.
-		 * Is equivalent to: {{{mine(supplier).flatMap(identity)}}}
+		/** Creates a [[Duty]] whose result is the result of the [[Duty]] created by the provided supplier.
+		 * Is equivalent to: {{{mine(supplier).flatMap(identity)}}} but slightly more efficient
 		 * ===Detailed behavior===
 		 * Creates a duty that, when executed:
 		 *		- evaluates the `supplier` within the $DoSiThEx;
@@ -373,11 +373,12 @@ trait Doer { thisDoer =>
 		 * $$threadSafe
 		 *
 		 * @param supplier the supplier of the duty whose execution will give the result. $isExecutedByDoSiThEx $notGuarded
-		 * @return the task described in the method description.
+		 * @return the duty described in the method description.
 		 */
 		inline def mineFlat[A](supplier: () => Duty[A]): Duty[A] = new MineFlat(supplier)
 
 		/** Creates a [[Duty]] that, when executed, triggers the execution of a duty that belongs to another [[Doer]] within that [[Doer]]'s $DoSiThEx; and completes with the same result as the `foreignDuty` but within this [[Doer]]'s DoSiThEx.
+		 * Useful to start a process in a foreign [[Doer]] and access its result as if it were executed sequentially.
 		 * $threadSafe
 		 *
 		 * @param foreignDoer the [[Doer]] to whom the `foreignTask` belongs.
@@ -388,8 +389,8 @@ trait Doer { thisDoer =>
 		}
 
 		/**
-		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of two tasks and returns their results combined with the received function.
-		 * Given the single thread nature of [[Doer]] this operation only has sense when the received duties are a chain of actions that involve timers, foreign, or alien duties.
+		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of two tasks and returns their results combined by the provided function.
+		 * Given the single-thread nature of [[Doer]] this operation only has sense when the provided duties involve foreign duties/tasks or alien duties/tasks.
 		 * ===Detailed behavior===
 		 * Creates a new [[Duty]] that, when executed:
 		 *		- triggers the execution of both: `dutyA` and `dutyB`
@@ -406,8 +407,8 @@ trait Doer { thisDoer =>
 			new ForkJoin(dutyA, dutyB, f)
 
 		/**
-		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the received iterable, and completes with a collection containing their results in the same order if all are successful, or a failure if any is faulty.
-		 * This overload is only convenient for small lists. For large ones it is not efficient and also may cause stack-overflow when the task is executed.
+		 * Creates a [[Duty]] that, when executed, simultaneously triggers the execution of all the [[Duty]]s in the provided iterable, and completes with a collection containing their results in the same order if all are successful, or a failure if any is faulty.
+		 * This overload is only convenient for very small lists. For large ones it is not efficient and also may cause stack-overflow when the task is executed.
 		 * Use the other overload for large lists or other kind of iterables.
 		 *
 		 * $threadSafe
@@ -1296,7 +1297,7 @@ trait Doer { thisDoer =>
 		 * */
 		inline def never: Task[Nothing] = Never
 
-		/** Creates a [[Task]] whose result is calculated at the call site even before the task is constructed.  The result of its execution is always the provided value.
+		/** Creates a [[Task]] whose result is calculated at the call site even before the task is constructed. The result of its execution is always the provided value.
 		 *
 		 * $threadSafe
 		 *
@@ -1324,7 +1325,7 @@ trait Doer { thisDoer =>
 		inline final def failed[A](throwable: Throwable): Task[A] = new Immediate(Failure(throwable));
 
 		/**
-		 * Creates a task whose result is calculated withing the $DoSiThEx.
+		 * Creates a task whose result is the result of the provided supplier.
 		 * ===Detailed behavior===
 		 * Creates a task that, when executed, evaluates the `resultSupplier` within the $DoSiThEx. If the evaluation finishes:
 		 *		- abruptly, completes with a [[Failure]] with the cause.
@@ -1338,7 +1339,7 @@ trait Doer { thisDoer =>
 		inline final def own[A](supplier: () => Try[A]): Task[A] = new Own(supplier);
 
 		/**
-		 * Creates a task whose result is calculated withing the $DoSiThEx and completes successfully as long as the evaluation of the supplier finishes normally.
+		 * Creates a task whose result is the result of applying [[Successful.apply]] to the result of the provided supplier as long as the evaluation of the supplier finishes normally; otherwise its result is a failure with the cause.
 		 * ===Detailed behavior===
 		 * Creates a task that, when executed, evaluates the `resultSupplier` within the $DoSiThEx. If it finishes:
 		 *		- abruptly, completes with a [[Failure]] containing the cause.
@@ -1354,8 +1355,8 @@ trait Doer { thisDoer =>
 		inline final def mine[A](supplier: () => A): Task[A] = new Own(() => Success(supplier()));
 
 		/**
-		 * Creates a task evaluates a task supplier withing the $DoSiThEx.
-		 * Is equivalent to: {{{own(supplier).flatMap(identity)}}}
+		 * Creates a task whose result is the result of the task returned by the provided supplier.
+		 * Is equivalent to: {{{own(supplier).flatMap(identity)}}} but slightly more efficient.
 		 * ===Detailed behavior===
 		 * Creates a task that, when executed, evaluates the `supplier` within the $DoSiThEx. If the evaluation finishes:
 		 *		- abruptly, completes with a [[Failure]] with the cause.
@@ -1368,7 +1369,8 @@ trait Doer { thisDoer =>
 		 */
 		inline def ownFlat[A](supplier: () => Task[A]): Task[A] = new OwnFlat(supplier)
 
-		/** Create a [[Task]] that just waits the completion of the specified [[Future]]. The result of the task, when executed, is the result of the received [[Future]].
+		/** Create a [[Task]] whose result will be the result of the provided [[Future]] when it completes.
+		 * Useful to access the result of a process that was already started in an alien executor as if it were executed sequentially.
 		 *
 		 * $threadSafe
 		 *
@@ -1377,8 +1379,9 @@ trait Doer { thisDoer =>
 		 */
 		inline final def wait[A](future: Future[A]): Task[A] = new Wait(future);
 
-		/** Creates a [[Task]] that, when executed, triggers the execution of a process in an alien executor, and waits its result, successful or not.
-		 * The process executor is usually foreign but may be the $DoSiThEx.
+		/** Creates a [[Task]] whose result will be the result of the [[Future]] returned by the provided supplier.
+		 * Useful to start a process in an alien executor and access its result as if it were executed sequentially.
+		 * The alien executor may be the $DoSiThEx of this [[Doer]].
 		 *
 		 * $threadSafe
 		 *
@@ -1387,7 +1390,9 @@ trait Doer { thisDoer =>
 		 */
 		inline final def alien[A](supplier: () => Future[A]): Task[A] = new Alien(supplier);
 
-		/** Creates a [[Task]] that, when executed, triggers the execution the `foreignTask` (a task that belongs to another [[Doer]]) within that [[Doer]]'s $DoSiThEx; and completes with the same result as the foreign task but within this [[Doer]]'s DoSiThEx.
+		/**
+		 * Creates a [[Task]] that, when executed, triggers the execution the `foreignTask` (a task that belongs to another [[Doer]]) within that [[Doer]]'s $DoSiThEx; and completes with the same result as the foreign task but within this [[Doer]]'s DoSiThEx.
+		 * Useful to start a process in a foreign [[Doer]] and access its result as if it were executed sequentially.
 		 *
 		 * $threadSafe
 		 *

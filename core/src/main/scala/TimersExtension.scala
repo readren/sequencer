@@ -18,6 +18,8 @@ object TimersExtension {
 	}
 }
 
+/** Extends [[Doer]] with operations that require to measure time.
+ * It adds the same operations as [[TimedDoer]] does but with a different inheritance mechanism. Both implementations will be maintained until I discover which is best. */
 trait TimersExtension { self: Doer =>
 
 	val timedAssistant: TimersExtension.Assistant
@@ -72,7 +74,7 @@ trait TimersExtension { self: Doer =>
 		 * @param maxRetries the maximum number of retries allowed.
 		 * @return           a [[Task]] that produces [[Maybe[A]]] indicating the result of the task execution, or [[Maybe.empty]] if it fails to complete within the allowed retries.
 		 */
-		def retryWhileTimeout(timeout: FiniteDuration, maxRetries: Int): Duty[Maybe[A]] = {
+		def retriedWhileTimeout(timeout: FiniteDuration, maxRetries: Int): Duty[Maybe[A]] = {
 			thisDuty.timeLimited(timeout).repeatedUntilSome(Integer.MAX_VALUE) { (retries, result) =>
 				result.fold {
 					if retries < maxRetries then Maybe.empty
@@ -147,7 +149,7 @@ trait TimersExtension { self: Doer =>
 		 *                   the task execution, or [[Maybe.empty]] if it fails to complete within
 		 *                   the allowed retries
 		 */
-		def reiterateWhileTimeout(timeout: FiniteDuration, maxRetries: Int): Task[Maybe[A]] = {
+		def reiteratedWhileTimeout(timeout: FiniteDuration, maxRetries: Int): Task[Maybe[A]] = {
 			thisTask.timeBounded(timeout).reiteratedHardyUntilSome[Maybe[A]](Integer.MAX_VALUE) { (retries, result) =>
 				result match {
 					case Success(mA) =>
