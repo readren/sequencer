@@ -18,8 +18,7 @@ object TimersExtension {
 	}
 }
 
-/** Extends [[Doer]] with operations that require to measure time.
- * It adds the same operations as [[TimedDoer]] does but with a different inheritance mechanism. Both implementations will be maintained until I discover which is best. */
+/** Extends [[Doer]] with operations that require time delays. */
 trait TimersExtension { self: Doer =>
 
 	val timedAssistant: TimersExtension.Assistant

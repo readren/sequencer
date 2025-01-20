@@ -13,7 +13,7 @@ object ActorBasedTimedDoer {
 	trait TimedAide extends ActorBasedDoer.Aide, TimersExtension.Assistant
 
 	private val currentTimedAide: ThreadLocal[TimedAide] = new ThreadLocal()
-	
+
 	def setup[A: Typeable](ctxA: ActorContext[A], timerScheduler: TimerScheduler[A])(frontier: ActorBasedTimedDoer => Behavior[A]): Behavior[A] = {
 		val aide = buildTimedAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]])
 		val doer: ActorBasedTimedDoer = new ActorBasedTimedDoer(aide);
@@ -40,7 +40,7 @@ object ActorBasedTimedDoer {
 	}
 }
 
-
+/** An [[ActorBasedDoer]] that support operation that require time delays. */
 class ActorBasedTimedDoer(timedAide: ActorBasedTimedDoer.TimedAide) extends ActorBasedDoer(timedAide), TimersExtension {
 	override val timedAssistant: ActorBasedTimedDoer.TimedAide = timedAide
 }

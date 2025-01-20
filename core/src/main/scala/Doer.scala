@@ -13,6 +13,7 @@ object Doer {
 	/** Specifies what an instance of [[Doer]] require to function properly. */
 	trait Assistant {
 		/**
+		 * Executes the provided [[Runnable]] after all others that were provided before have completed.
 		 * The implementation should queue the execution of all the [[Runnable]]s this method receives on the same single-thread executor. Note that "single" does not imply "same". The thread may change.
 		 * From now on said executor will be called "the doer's single-thread executor" or DoSiThEx for short.
 		 * The implementation should guarantee that passed [[Runnable]]s are executed one after the other (no more than one [[Runnable]] will be active at any given time) and preferably in the order of submission.
@@ -20,7 +21,7 @@ object Doer {
 		 * The implementation should not throw non-fatal exceptions.
 		 * The implementation should be thread-safe.
 		 *
-		 * All the deferred actions preformed by the [[Task]] operations are executed by calling this method unless the particular operation documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive as.
+		 * All the deferred actions preformed by the [[Duty]] and [[Task]] operations are executed by calling this method unless the particular operation documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive.
 		 * */
 		def queueForSequentialExecution(runnable: Runnable): Unit
 
