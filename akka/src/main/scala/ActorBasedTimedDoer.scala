@@ -25,7 +25,7 @@ object ActorBasedTimedDoer {
 	private def buildTimedAide[A >: Procedure](ctx: ActorContext[A], timerScheduler: TimerScheduler[A]): TimedAide = {
 		val aide = ActorBasedDoer.buildAide(ctx)
 		new TimedAide {
-			override def queueForSequentialExecution(runnable: Runnable): Unit = aide.queueForSequentialExecution(runnable)
+			override def executeSequentially(runnable: Runnable): Unit = aide.executeSequentially(runnable)
 
 			override def current: TimedAide = currentTimedAide.get
 
@@ -33,7 +33,7 @@ object ActorBasedTimedDoer {
 
 			override def scheduler: Scheduler = aide.scheduler
 
-			override def queueForSequentialExecutionDelayed(key: Long, delay: FiniteDuration, runnable: Runnable): Unit = timerScheduler.startSingleTimer(key, Procedure(runnable), delay)
+			override def executeSequentiallyWithDelay(key: Long, delay: FiniteDuration, runnable: Runnable): Unit = timerScheduler.startSingleTimer(key, Procedure(runnable), delay)
 
 			override def cancelDelayedExecution(key: Long): Unit = timerScheduler.cancel(key)
 		}

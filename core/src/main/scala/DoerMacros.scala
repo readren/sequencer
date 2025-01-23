@@ -7,7 +7,7 @@ import scala.quoted.{Expr, Quotes, Type}
 object DoerMacros {
 
 
-	def triggerImpl[A: Type](isRunningInDoSiThExExpr: Expr[Boolean], assistantExpr: Expr[Doer.Assistant], dutyExpr: Expr[Doer#Duty[A]], onCompleteExpr: Expr[A => Unit])(using quotes: Quotes): Expr[Unit] = {
+	def triggerImpl[A: Type](isWithinDoSiThExExpr: Expr[Boolean], assistantExpr: Expr[Doer.Assistant], dutyExpr: Expr[Doer#Duty[A]], onCompleteExpr: Expr[A => Unit])(using quotes: Quotes): Expr[Unit] = {
 		import quotes.reflect.*
 
 		def runnable: Expr[Runnable] = {
@@ -23,26 +23,26 @@ object DoerMacros {
 			}
 		}
 
-		isRunningInDoSiThExExpr.value match {
-			case Some(isRunningInDoSiThEx) =>
-				if isRunningInDoSiThEx then '{
-					assert($assistantExpr.isCurrentAssistant, s"The current thread does not correspond to this doer's assistant: this=${$assistantExpr}, current=${$assistantExpr.current}")
+		isWithinDoSiThExExpr.value match {
+			case Some(isWithinDoSiThEx) =>
+				if isWithinDoSiThEx then '{
+					assert($assistantExpr.isWithinDoSiThEx, s"The current thread does not correspond to this doer's assistant: this=${$assistantExpr}, current=${$assistantExpr.current}")
 					$dutyExpr.engagePortal($onCompleteExpr)
 				}
-				else '{ $assistantExpr.queueForSequentialExecution($runnable) }
+				else '{ $assistantExpr.executeSequentially($runnable) }
 
 			case None =>
 				'{
-					if $isRunningInDoSiThExExpr then {
-						assert($assistantExpr.isCurrentAssistant, s"The current thread does not correspond to this doer's assistant: this=${$assistantExpr}, current=${$assistantExpr.current}")
+					if $isWithinDoSiThExExpr then {
+						assert($assistantExpr.isWithinDoSiThEx, s"The current thread does not correspond to this doer's assistant: this=${$assistantExpr}, current=${$assistantExpr.current}")
 						$dutyExpr.engagePortal($onCompleteExpr)
 					}
-					else $assistantExpr.queueForSequentialExecution($runnable)
+					else $assistantExpr.executeSequentially($runnable)
 				}
 		}
 	}
 
-	def queueForSequentialExecutionImpl(assistantExpr: Expr[Assistant], procedureExpr: Expr[Unit])(using quotes: Quotes): Expr[Unit] = {
+	def executeSequentiallyImpl(assistantExpr: Expr[Assistant], procedureExpr: Expr[Unit])(using quotes: Quotes): Expr[Unit] = {
 		import quotes.reflect.*
 
 		// Capture the source code location
@@ -59,7 +59,7 @@ object DoerMacros {
 			}
 		}
 		// Call the assistant's method with the new wrapped Runnable
-		'{ $assistantExpr.queueForSequentialExecution($runnable) }
+		'{ $assistantExpr.executeSequentially($runnable) }
 	}
 
 	def reportFailureImpl(assistantExpr: Expr[Assistant], causeExpr: Expr[Throwable])(using quotes: Quotes): Expr[Unit] = {

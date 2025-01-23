@@ -21,7 +21,7 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 		val foreignAssistant: Doer.Assistant = new Doer.Assistant { thisAssistant => 
 			private val executor = Executors.newSingleThreadExecutor()
 
-			override def queueForSequentialExecution(runnable: Runnable): Unit = executor.execute { () =>
+			override def executeSequentially(runnable: Runnable): Unit = executor.execute { () =>
 				currentAssistant.set(thisAssistant)
 				try runnable.run()
 				finally currentAssistant.remove()
@@ -32,7 +32,8 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 			override def reportFailure(cause: Throwable): Unit = throw cause
 		}
 		new Doer {
-			override val assistant: Doer.Assistant = foreignAssistant
+			override type Assistant = foreignAssistant.type
+			override val assistant: Assistant = foreignAssistant
 		}
 	}
 

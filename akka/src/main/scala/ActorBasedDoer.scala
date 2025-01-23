@@ -28,7 +28,7 @@ object ActorBasedDoer {
 
 
 	private[taskflow] def buildAide[A >: Procedure](ctx: ActorContext[A]): Aide = new Aide {
-		override def queueForSequentialExecution(runnable: Runnable): Unit = ctx.self ! Procedure(runnable)
+		override def executeSequentially(runnable: Runnable): Unit = ctx.self ! Procedure(runnable)
 
 		override def current: Aide = currentAssistant.get
 
@@ -56,8 +56,8 @@ object ActorBasedDoer {
 }
 
 class ActorBasedDoer(aide: ActorBasedDoer.Aide) extends AbstractDoer {
-
-	override val assistant: ActorBasedDoer.Aide = aide
+	override type Assistant = ActorBasedDoer.Aide
+	override val assistant: Assistant = aide
 
 	extension [A](target: ActorRef[A]) {
 		def say(message: A): Task[Unit] = Task.mine(() => target ! message)
@@ -75,11 +75,11 @@ class ActorBasedDoer(aide: ActorBasedDoer.Aide) extends AbstractDoer {
 		 * Triggers the execution of this task and sends the result to the `destination`.
 		 * 
 		 * @param destination the [[ActorRef]] of the actor to send the result to.
-		 * @param isRunningInDoSiThEx $isRunningInDoSiThEx
+		 * @param isWithinDoSiThEx $isRunningInDoSiThEx
 		 * @param errorHandler called if the execution of this task completed with failure.
 		 */
-		def attemptAndSend(destination: ActorRef[A], isRunningInDoSiThEx: Boolean = false)(errorHandler: Throwable => Unit): Unit = {
-			task.trigger(isRunningInDoSiThEx) {
+		def attemptAndSend(destination: ActorRef[A], isWithinDoSiThEx: Boolean = assistant.isWithinDoSiThEx)(errorHandler: Throwable => Unit): Unit = {
+			task.trigger(isWithinDoSiThEx) {
 				case Success(r) => destination ! r;
 				case Failure(e) => errorHandler(e)
 			}

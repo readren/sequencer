@@ -2,6 +2,7 @@ package readren.taskflow
 
 import TimersExtension.TimerKey
 
+import scala.concurrent.Future.never.onComplete
 import scala.concurrent.duration.FiniteDuration
 import scala.util.{Failure, Success, Try}
 
@@ -11,7 +12,7 @@ object TimersExtension {
 
 	trait Assistant {
 		/** The implementation should not throw non-fatal exceptions. */
-		def queueForSequentialExecutionDelayed(key: TimerKey, delay: FiniteDuration, runnable: Runnable): Unit
+		def executeSequentiallyWithDelay(key: TimerKey, delay: FiniteDuration, runnable: Runnable): Unit
 
 		/** The implementation should not throw non-fatal exceptions. */
 		def cancelDelayedExecution(key: TimerKey): Unit
@@ -31,8 +32,8 @@ trait TimersExtension { self: Doer =>
 		lastTimerId
 	}
 
-	inline def queueForSequentialExecutionDelayed(key: TimerKey, delay: FiniteDuration)(runnable: Runnable): Unit =
-		timedAssistant.queueForSequentialExecutionDelayed(key, delay, runnable)
+	inline def executeSequentiallyDelayed(key: TimerKey, delay: FiniteDuration)(runnable: Runnable): Unit =
+		timedAssistant.executeSequentiallyWithDelay(key, delay, runnable)
 
 	inline def cancelDelayedExecution(key: TimerKey): Unit =
 		timedAssistant.cancelDelayedExecution(key)
@@ -42,12 +43,8 @@ trait TimersExtension { self: Doer =>
 
 	extension [A](thisDuty: Duty[A]) {
 
-		def delayed(delay: FiniteDuration, timerKey: TimerKey = genTimerKey()): Duty[A] = {
-			new Duty[A] {
-				override def engage(onComplete: A => Unit): Unit =
-					queueForSequentialExecutionDelayed(timerKey, delay)(() => thisDuty.engagePortal(onComplete))
-			}
-		}
+		inline def delayed(delay: FiniteDuration, timerKey: TimerKey = genTimerKey()): Duty[A] =
+			new Delayed(thisDuty, delay, timerKey)
 
 		/**
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but wraps its result in [[Maybe.some]] if the duty completes within the specified `timeout`.
@@ -61,7 +58,7 @@ trait TimersExtension { self: Doer =>
 		 * @return           a [[Duty]] that produces [[Maybe.some]] if the task completes within the timeout, or [[Maybe.empty]] otherwise.
 		 */
 		inline def timeLimited(timeout: FiniteDuration, timerKey: TimerKey = genTimerKey()): Duty[Maybe[A]] = {
-			new TimeLimited[A, Maybe[A]](thisDuty, timeout, identity, timerKey)
+			new TimeLimited[A, Maybe[A]](thisDuty, timeout, timerKey, identity)
 		}
 
 		/**
@@ -83,10 +80,14 @@ trait TimersExtension { self: Doer =>
 		}
 	}
 
+	final class Delayed[A, B](duty: Duty[A], delay: FiniteDuration, timerKey: TimerKey) extends Duty[A] {
+		override def engage(onComplete: A => Unit): Unit =
+			executeSequentiallyDelayed(timerKey, delay)(() => duty.engagePortal(onComplete))
+	}
 
 	/** Used by [[timeLimited]] and [[timeBounded]].
 	 */
-	final class TimeLimited[A, B](duty: Duty[A], timeout: FiniteDuration, f: Maybe[A] => B, timerKey: TimerKey = genTimerKey()) extends Duty[B] {
+	final class TimeLimited[A, B](duty: Duty[A], timeout: FiniteDuration, timerKey: TimerKey, f: Maybe[A] => B) extends Duty[B] {
 		override def engage(onComplete: B => Unit): Unit = {
 			var hasElapsed = false;
 			var hasCompleted = false;
@@ -97,7 +98,7 @@ trait TimersExtension { self: Doer =>
 					onComplete(f(Maybe.some(a)))
 				}
 			}
-			queueForSequentialExecutionDelayed(timerKey, timeout) {
+			executeSequentiallyDelayed(timerKey, timeout) {
 				() =>
 					if (!hasCompleted) {
 						hasElapsed = true;
@@ -107,6 +108,15 @@ trait TimersExtension { self: Doer =>
 		}
 	}
 
+	extension (companion: Duty.type) {
+		def delay[A](duration: FiniteDuration, timerKey: TimerKey = genTimerKey())(supplier: () => A): Duty[A] =
+			new Delay(duration, timerKey, supplier)
+	}
+
+	final class Delay[A](duration: FiniteDuration, timerKey: TimerKey, supplier: () => A) extends Duty[A] {
+		override def engage(onComplete: A => Unit): Unit =
+			timedAssistant.executeSequentiallyWithDelay(timerKey, duration, () => onComplete(supplier()) )
+	}
 
 	//// Task extension ////
 
@@ -115,8 +125,9 @@ trait TimersExtension { self: Doer =>
 		def postponed(delay: FiniteDuration, timerKey: TimerKey = genTimerKey()): Task[A] = {
 			new Task[A] {
 				override def engage(onComplete: Try[A] => Unit): Unit =
-					queueForSequentialExecutionDelayed(timerKey, delay)(() => thisTask.engagePortal(onComplete))
+					executeSequentiallyDelayed(timerKey, delay)(() => thisTask.engagePortal(onComplete))
 			}
+
 		}
 
 		/**
@@ -132,7 +143,7 @@ trait TimersExtension { self: Doer =>
 		 */
 		def timeBounded(timeout: FiniteDuration, timerKey: TimerKey = genTimerKey()): Task[Maybe[A]] = new Task[Maybe[A]] {
 			override def engage(onComplete: Try[Maybe[A]] => Unit): Unit = {
-				val timeLimitedDuty = new TimeLimited[Try[A], Try[Maybe[A]]](thisTask, timeout, mtA => mtA.fold(Success(Maybe.empty))(_.map(Maybe.some)), timerKey)
+				val timeLimitedDuty = new TimeLimited[Try[A], Try[Maybe[A]]](thisTask, timeout, timerKey, mtA => mtA.fold(Success(Maybe.empty))(_.map(Maybe.some)))
 				timeLimitedDuty.engagePortal(onComplete)
 			}
 		}
@@ -206,7 +217,7 @@ trait TimersExtension { self: Doer =>
 					case Success(mtA) =>
 						mtA.fold {
 							if (remainingExecutions > 1) {
-								queueForSequentialExecutionDelayed(timerKey, delay) { () => loop(remainingExecutions - 1) }
+								executeSequentiallyDelayed(timerKey, delay) { () => loop(remainingExecutions - 1) }
 							} else
 								onComplete(Success(Maybe.empty))
 						} {

@@ -31,7 +31,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 
 		private val sequencer: AtomicInteger = new AtomicInteger(0)
 
-		override def queueForSequentialExecution(runnable: Runnable): Unit = {
+		override def executeSequentially(runnable: Runnable): Unit = {
 			val id = sequencer.addAndGet(1)
 			// println(s"queuedForSequentialExecution: pre execute; id=$id, thread=${Thread.currentThread().getName}; runnable=$runnable")
 			doSiThEx.execute(() => {
@@ -67,7 +67,8 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	}
 
 	private val doer: Doer = new Doer {
-		override val assistant: Doer.Assistant = theAssistant
+		override type Assistant = theAssistant.type
+		override val assistant: Assistant = theAssistant
 	}
 
 	import doer.*

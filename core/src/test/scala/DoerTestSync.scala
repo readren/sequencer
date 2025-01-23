@@ -23,7 +23,7 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 
 	private var oDoerThreadId: Option[Long] = None
 	private val theAssistant = new Doer.Assistant { thisAssistant =>
-		override def queueForSequentialExecution(runnable: Runnable): Unit = {
+		override def executeSequentially(runnable: Runnable): Unit = {
 			oDoerThreadId match {
 				case None => oDoerThreadId = Some(Thread.currentThread().getId)
 				case Some(doerThreadId) => assert(doerThreadId == Thread.currentThread().getId)
@@ -39,7 +39,8 @@ class DoerTestSync extends AnyFreeSpec with ScalaCheckPropertyChecks with Matche
 	}
 
 	val doer: Doer = new Doer {
-		override val assistant: Doer.Assistant = theAssistant
+		override type Assistant = theAssistant.type
+		override val assistant: Assistant = theAssistant
 	}
 
 	import doer.*
