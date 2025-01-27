@@ -22,7 +22,9 @@ object TimersExtension {
 /** Extends [[Doer]] with operations that require time delays. */
 trait TimersExtension { self: Doer =>
 
-	val timedAssistant: TimersExtension.Assistant
+	type TimedAssistant <: TimersExtension.Assistant
+	
+	val timedAssistant: TimedAssistant
 
 	/** Do not refer to this instance variable. It is private to the [[genTimerKey]] method. */
 	private var lastTimerId: TimerKey = 0;
@@ -43,12 +45,31 @@ trait TimersExtension { self: Doer =>
 
 	extension [A](thisDuty: Duty[A]) {
 
+		/** Returns a [[Duty]] that behaves the same as `thisDuty` but its execution is delayed the provided `delay` time after it was triggered. */
 		inline def delayed(delay: FiniteDuration, timerKey: TimerKey = genTimerKey()): Duty[A] =
 			new Delayed(thisDuty, delay, timerKey)
 
+		/** Like [[Duty.map]] but the function application is delayed the provided `delay`.
+		 * Note that the execution of `thisDuty` is not delayed. The delay occurs between the execution of `thisDuty` and the application of `f` to its result.
+		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).delayed(delay, timerKey)).map(f) }}} but more efficient. */
+		def mapDelayed[B](delay: FiniteDuration, timerKey: TimerKey = genTimerKey())(f: A => B): Duty[B] = new Duty[B] {
+			override def engage(onComplete: B => Unit): Unit = {
+				thisDuty.engagePortal(a => timedAssistant.executeSequentiallyWithDelay(timerKey, delay, () => onComplete(f(a))))
+			}
+		}
+
+		/** Like [[Duty.flatMap]] but the function application is delayed the provided `delay`.
+		 * Note that the execution of `thisDuty` is not delayed. The delay occurs between the execution of `thisDuty` and the application of `f` to its result.
+		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).delayed(delay, timerKey)).flatMap(f) }}} but more efficient. */
+		def flatMapDelayed[B](delay: FiniteDuration, timerKey: TimerKey = genTimerKey())(f: A => Duty[B]): Duty[B] = new Duty[B] {
+			override def engage(onComplete: B => Unit): Unit = {
+				thisDuty.engagePortal(a => timedAssistant.executeSequentiallyWithDelay(timerKey, delay, () => f(a).engagePortal(onComplete)))
+			}
+		}
+
 		/**
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but wraps its result in [[Maybe.some]] if the duty completes within the specified `timeout`.
-		 * If the duty exceeds the `timeout`, it returns [[Maybe.empty]] instead.
+		 * If the duty execution exceeds the `timeout`, it returns [[Maybe.empty]] instead.
 		 *
 		 * The `timerKey` parameter specifies the identifier of the timer used to track the elapsed time.
 		 * Canceling this timer within the [[Doer]] `DoSiThEx` before the `timeout` elapses effectively removes the time constraint, treating the `timeout` as infinite.

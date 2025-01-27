@@ -65,7 +65,11 @@ abstract class AbstractDoer extends Doer
  * @define isWithinDoSiThEx indicates whether the caller is certain that this method is being executed within the $DoSiThEx. If there is no such certainty, the caller should set this parameter to `false` (or don't specify a value). This flag is useful for those [[Task]]s whose first action can or must be executed in the DoSiThEx, as it informs them that they can immediately execute said action synchronously. This method is thread-safe when this parameter value is false.
  */
 trait Doer { thisDoer =>
+
+	/** The type of the assistant of this [[Doer]] instance.  */
 	type Assistant <: Doer.Assistant
+
+	/** The assistant of this [[Doer]] instance. */
 	val assistant: Assistant
 
 	/**
@@ -930,10 +934,11 @@ trait Doer { thisDoer =>
 			oResult.fold {
 				this.oResult = Maybe.some(result);
 				this.onCompletedObservers.foreach(_(result));
-				firstOnCompleteObserver(result);
-				// Clean the observers list to help the garbage collector.
-				this.onCompletedObservers = Nil
-				firstOnCompleteObserver = null;
+				this.onCompletedObservers = Nil // Clean the observers list to help the garbage collector.
+				if firstOnCompleteObserver != null then {
+					firstOnCompleteObserver(result);
+					firstOnCompleteObserver = null // Clean the observers list to help the garbage collector.
+				}
 			}(onAlreadyCompleted)
 			this
 		}
@@ -2278,14 +2283,14 @@ trait Doer { thisDoer =>
 		 * @return true if this [[Commitment]] was either fulfilled or broken; or false if it is still pending. */
 		def isCompleted: Boolean = {
 			assert(assistant.isWithinDoSiThEx)
-			this.oResult.isDefined
+			oResult.isDefined
 		}
 
 		/** CAUTION: should be called within the $DoSiThEx
 		 * @return true if this [[Commitment]] is still pending; or false if it was completed. */
 		def isPending: Boolean = {
 			assert(assistant.isWithinDoSiThEx)
-			this.oResult.isEmpty
+			oResult.isEmpty
 		}
 
 		protected override def engage(onComplete: Try[A] => Unit): Unit = subscribe(onComplete)
@@ -2321,7 +2326,7 @@ trait Doer { thisDoer =>
 		def complete(result: Try[A], isWithinDoSiThEx: Boolean = assistant.isWithinDoSiThEx)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
 			if isWithinDoSiThEx then completeHere(result)(onAlreadyCompleted)
 			else executeSequentially(completeHere(result)(onAlreadyCompleted))
-			this;
+			thisCommitment
 		}
 
 		/** Provokes that the [[subscriptableTask]] that this [[Commitment]] promises to complete to be completed with the received `result`.
@@ -2331,36 +2336,39 @@ trait Doer { thisDoer =>
 		def completeHere(result: Try[A])(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
 			assert(assistant.isWithinDoSiThEx)
 			oResult.fold {
-				this.oResult = Maybe.some(result);
-				this.onCompletedObservers.foreach(_(result));
-				// la lista de observadores quedó obsoleta. Borrarla para minimizar posibilidad de memory leak.
-				this.onCompletedObservers = Nil
+				oResult = Maybe.some(result);
+				onCompletedObservers.foreach(_(result));
+				onCompletedObservers = Nil; // unbind the observers list to help the garbage collector
+				if firstOnCompleteObserver != null then {
+					firstOnCompleteObserver(result)
+					firstOnCompleteObserver = null // unbind the observer reference to help the garbage collector
+				};
 			} { value =>
 				try onAlreadyCompleted(value)
 				catch {
 					case NonFatal(cause) => reportFailure(cause)
 				}
 			}
-			this;
+			thisCommitment
 		}
 
 
 		/** Provokes that the [[subscriptableTask]] this [[Commitment]] promises to complete to be fulfilled (completed successfully) with the received `result`. */
 		def fulfill(result: A, isWithinDoSiThEx: Boolean = assistant.isWithinDoSiThEx)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type =
 			if isWithinDoSiThEx then completeHere(Success(result))(onAlreadyCompleted)
-			else this.complete(Success(result))(onAlreadyCompleted)
+			else complete(Success(result))(onAlreadyCompleted)
 
 		/** Provokes that the [[subscriptableTask]] this [[Commitment]] promises to complete to be broken (completed with failure) with the received `cause`. */
 		def break(cause: Throwable, isWithinDoSiThEx: Boolean = assistant.isWithinDoSiThEx)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
 			if isWithinDoSiThEx then completeHere(Failure(cause))(onAlreadyCompleted)
-			else this.complete(Failure(cause))(onAlreadyCompleted)
+			else complete(Failure(cause))(onAlreadyCompleted)
 		}
 
 		/** Programs the completion of the [[subscriptableTask]] this [[Commitment]] promises to complete to be completed with the result of the received [[Task]] when it is completed. */
 		def completeWith(otherTask: Task[A], isWithinDoSiThEx: Boolean = assistant.isWithinDoSiThEx)(onAlreadyCompleted: Try[A] => Unit = _ => ()): this.type = {
-			if (otherTask ne this)
+			if (otherTask ne thisCommitment)
 				otherTask.trigger(isWithinDoSiThEx)(result => completeHere(result)(onAlreadyCompleted));
-			this
+			thisCommitment
 		}
 	}
 

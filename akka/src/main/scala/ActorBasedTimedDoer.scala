@@ -42,5 +42,6 @@ object ActorBasedTimedDoer {
 
 /** An [[ActorBasedDoer]] that support operation that require time delays. */
 class ActorBasedTimedDoer(timedAide: ActorBasedTimedDoer.TimedAide) extends ActorBasedDoer(timedAide), TimersExtension {
-	override val timedAssistant: ActorBasedTimedDoer.TimedAide = timedAide
+	override type TimedAssistant = ActorBasedTimedDoer.TimedAide
+	override val timedAssistant: TimedAssistant = timedAide
 }

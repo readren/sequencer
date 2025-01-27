@@ -15,7 +15,7 @@ object ActorBasedDoer {
 	}
 
 	private val currentAssistant: ThreadLocal[Aide] = new ThreadLocal()
-	
+
 	private[taskflow] case class Procedure(runnable: Runnable)
 
 	def setup[A: Typeable](ctxA: ActorContext[A])(frontier: ActorBasedDoer => Behavior[A]): Behavior[A] = {
@@ -33,7 +33,7 @@ object ActorBasedDoer {
 		override def current: Aide = currentAssistant.get
 
 		override def reportFailure(cause: Throwable): Unit = ctx.log.error("""Error occurred while the actor "{}" was executing a Runnable within a Task.""", ctx.self, cause)
-		
+
 		override def scheduler: Scheduler = ctx.system.scheduler
 	}
 
@@ -46,7 +46,7 @@ object ActorBasedDoer {
 						case procedure: Procedure =>
 							procedure.runnable.run()
 							Behaviors.same // TODO: analyze if returning `same` may cause problems in edge cases
-							
+
 						case a: A @unchecked =>
 							target(ctxU, a)
 					}
@@ -73,7 +73,7 @@ class ActorBasedDoer(aide: ActorBasedDoer.Aide) extends AbstractDoer {
 
 		/**
 		 * Triggers the execution of this task and sends the result to the `destination`.
-		 * 
+		 *
 		 * @param destination the [[ActorRef]] of the actor to send the result to.
 		 * @param isWithinDoSiThEx $isRunningInDoSiThEx
 		 * @param errorHandler called if the execution of this task completed with failure.
