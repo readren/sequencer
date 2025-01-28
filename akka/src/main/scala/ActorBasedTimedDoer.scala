@@ -5,6 +5,7 @@ import ActorBasedDoer.Procedure
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{Behavior, Scheduler}
 import readren.taskflow.TimersExtension
+import readren.taskflow.TimersExtension.TimerKey
 
 import scala.concurrent.duration.FiniteDuration
 import scala.reflect.Typeable
@@ -25,17 +26,32 @@ object ActorBasedTimedDoer {
 	private def buildTimedAide[A >: Procedure](ctx: ActorContext[A], timerScheduler: TimerScheduler[A]): TimedAide = {
 		val aide = ActorBasedDoer.buildAide(ctx)
 		new TimedAide {
-			override def executeSequentially(runnable: Runnable): Unit = aide.executeSequentially(runnable)
+			override def executeSequentially(runnable: Runnable): Unit =
+				aide.executeSequentially(runnable)
 
-			override def current: TimedAide = currentTimedAide.get
+			override def current: TimedAide =
+				currentTimedAide.get
 
-			override def reportFailure(cause: Throwable): Unit = aide.reportFailure(cause)
+			override def reportFailure(cause: Throwable): Unit =
+				aide.reportFailure(cause)
 
-			override def scheduler: Scheduler = aide.scheduler
+			override def scheduler: Scheduler =
+				aide.scheduler
 
-			override def executeSequentiallyWithDelay(key: Long, delay: FiniteDuration, runnable: Runnable): Unit = timerScheduler.startSingleTimer(key, Procedure(runnable), delay)
+			override def executeSequentiallyWithDelay(key: TimerKey, delay: FiniteDuration, runnable: Runnable): Unit =
+				timerScheduler.startSingleTimer(key, Procedure(runnable), delay)
 
-			override def cancelDelayedExecution(key: Long): Unit = timerScheduler.cancel(key)
+			override def executeSequentiallyAtFixedRate(key: TimerKey, initialDelay: FiniteDuration, interval: FiniteDuration, runnable: Runnable): Unit =
+				timerScheduler.startTimerAtFixedRate(key, Procedure(runnable), initialDelay, interval)
+
+			override def cancelDelayedExecution(key: TimerKey): Unit =
+				timerScheduler.cancel(key)
+
+			override def cancelAll(): Unit =
+				timerScheduler.cancelAll()
+
+			override def isTimerActive(key: TimerKey): Boolean =
+				timerScheduler.isTimerActive(key)
 		}
 	}
 }

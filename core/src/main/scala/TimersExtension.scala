@@ -15,7 +15,14 @@ object TimersExtension {
 		def executeSequentiallyWithDelay(key: TimerKey, delay: FiniteDuration, runnable: Runnable): Unit
 
 		/** The implementation should not throw non-fatal exceptions. */
+		def executeSequentiallyAtFixedRate(key: TimerKey, delay: FiniteDuration, period: FiniteDuration, runnable: Runnable): Unit
+		
+		/** The implementation should not throw non-fatal exceptions. */
 		def cancelDelayedExecution(key: TimerKey): Unit
+		
+		def cancelAll(): Unit
+		
+		def isTimerActive(key: TimerKey): Boolean
 	}
 }
 
