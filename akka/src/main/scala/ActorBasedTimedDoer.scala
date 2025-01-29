@@ -5,8 +5,9 @@ import ActorBasedDoer.Procedure
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{Behavior, Scheduler}
 import readren.taskflow.TimersExtension
-import readren.taskflow.TimersExtension.TimerKey
+import readren.taskflow.TimersExtension.{FixedRateLike, NanoDuration, NanoTime}
 
+import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.FiniteDuration
 import scala.reflect.Typeable
 
@@ -14,6 +15,19 @@ object ActorBasedTimedDoer {
 	trait TimedAide extends ActorBasedDoer.Aide, TimersExtension.Assistant
 
 	private val currentTimedAide: ThreadLocal[TimedAide] = new ThreadLocal()
+
+	sealed trait Plan
+
+	case class SingleTime(delay: NanoDuration) extends Plan
+
+	case class FixedRate(initialDelay: NanoDuration, interval: NanoDuration) extends Plan, FixedRateLike {
+		var startingTime: NanoTime = 0
+
+		override def numOfSkippedExecutions: Long = -1
+	}
+
+	case class FixedDelay(initialDelay: NanoDuration, delay: NanoDuration) extends Plan
+
 
 	def setup[A: Typeable](ctxA: ActorContext[A], timerScheduler: TimerScheduler[A])(frontier: ActorBasedTimedDoer => Behavior[A]): Behavior[A] = {
 		val aide = buildTimedAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]])
@@ -38,20 +52,30 @@ object ActorBasedTimedDoer {
 			override def scheduler: Scheduler =
 				aide.scheduler
 
-			override def executeSequentiallyWithDelay(key: TimerKey, delay: FiniteDuration, runnable: Runnable): Unit =
-				timerScheduler.startSingleTimer(key, Procedure(runnable), delay)
+			override type Schedule = Plan
 
-			override def executeSequentiallyAtFixedRate(key: TimerKey, initialDelay: FiniteDuration, interval: FiniteDuration, runnable: Runnable): Unit =
-				timerScheduler.startTimerAtFixedRate(key, Procedure(runnable), initialDelay, interval)
+			override def newDelaySchedule(delay: NanoDuration): SingleTime = SingleTime(delay)
 
-			override def cancelDelayedExecution(key: TimerKey): Unit =
-				timerScheduler.cancel(key)
+			override def newFixedRateSchedule(initialDelay: NanoDuration, interval: NanoDuration): FixedRate = FixedRate(initialDelay, interval)
+
+			override def newFixedDelaySchedule(initialDelay: NanoDuration, delay: NanoDuration): FixedDelay = FixedDelay(initialDelay, delay)
+
+			override def executeSequentiallyScheduled(schedule: Schedule, runnable: Runnable): Unit = {
+				schedule match {
+					case SingleTime(delay) => timerScheduler.startSingleTimer(schedule, Procedure(runnable), FiniteDuration(delay, TimeUnit.NANOSECONDS))
+					case FixedRate(initialDelay, interval) => timerScheduler.startTimerAtFixedRate(schedule, Procedure(runnable), FiniteDuration(initialDelay, TimeUnit.NANOSECONDS), FiniteDuration(interval, TimeUnit.NANOSECONDS))
+					case FixedDelay(initialDelay, delay) => timerScheduler.startTimerWithFixedDelay(schedule, Procedure(runnable), FiniteDuration(initialDelay, TimeUnit.NANOSECONDS), FiniteDuration(delay, TimeUnit.NANOSECONDS))
+				}
+			}
+
+			override def cancel(schedule: Schedule): Unit =
+				timerScheduler.cancel(schedule)
 
 			override def cancelAll(): Unit =
 				timerScheduler.cancelAll()
 
-			override def isTimerActive(key: TimerKey): Boolean =
-				timerScheduler.isTimerActive(key)
+			override def isActive(schedule: Schedule): Boolean =
+				timerScheduler.isTimerActive(schedule)
 		}
 	}
 }

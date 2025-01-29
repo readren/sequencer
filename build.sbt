@@ -1,4 +1,4 @@
-ThisBuild / version := "0.2.3-SNAPSHOT"
+ThisBuild / version := "0.2.4-SNAPSHOT"
 
 ThisBuild / scalaVersion := "3.6.2"
 
@@ -28,7 +28,7 @@ lazy val akkaIntegration = (project in file("akka"))
 		idePackagePrefix := Some("readren.taskflow.akka"),
 		resolvers += "Akka library repository".at("https://repo.akka.io/maven"),
 		libraryDependencies ++= Seq(
-			// "ch.qos.logback" % "logback-classic" % "1.5.16",
+			"ch.qos.logback" % "logback-classic" % "1.5.16",
 			"com.typesafe.akka" %% "akka-actor-typed" % AkkaVersion,
 			"com.typesafe.akka" %% "akka-actor-testkit-typed" % AkkaVersion % Test,
 			"com.typesafe.akka" %% "akka-slf4j" % AkkaVersion
