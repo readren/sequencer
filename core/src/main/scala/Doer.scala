@@ -10,7 +10,7 @@ import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
 object Doer {
-	/** Specifies what an instance of [[Doer]] require to function properly. */
+	/** Specifies what an instance of [[Doer]] requires to exist. */
 	trait Assistant {
 		/**
 		 * Executes the provided [[Runnable]] after all others that were provided before have completed.

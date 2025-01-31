@@ -1,6 +1,6 @@
 package readren.taskflow
 
-import TimersExtension.NanoDuration
+import SchedulingExtension.NanoDuration
 
 import java.util.function.{Consumer, Supplier}
 import scala.concurrent.duration.FiniteDuration
@@ -8,71 +8,72 @@ import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 
 
-object TimersExtension {
+object SchedulingExtension {
 
 	type NanoDuration = Long
-	type NanoTime = Long
 
-	/** Specifies what must be exposed by an instance of [[Assistant.Schedule]] created with the [[Assistant.newFixedRateSchedule]] method. */
-	trait FixedRateLike {
-		/** @return The number of executions of the [[Runnable]] that were skipped before the current one due to processing power saturation or negative `initialDelay`.
-		 * It is calculated based on the scheduled interval, and the difference between the actual [[startingTime]] and the scheduled time:
-		 * {{{ (actualTime - scheduledTime) / interval }}}
-		 * A negative value means the implementation is unable to know the `scheduledTime` to calculate it and should be ignored.
-		 * Intended to be accessed only within the thread that is currently running the [[Runnable]] that was scheduled with this instance of [[Assistant.Schedule]]. */
-		def numOfSkippedExecutions: Long
-
-		/** @return The [[System.nanoTime]] when the current execution started.
-		 * The [[numOfSkippedExecutions]] is calculated based on this time.
-		 * Intended to be accessed only within the thread that is currently running the [[Runnable]] that was scheduled with this instance of [[Assistant.Schedule]]. */
-		def startingTime: NanoTime
-	}
-
-	trait Assistant {
+	/** Specifies what an instance of [[Doer]] extended with the [[SchedulingExtension]] requires to exist.
+	 *
+	 * Design note: Why not avoid the vulnerability "using the same instance of Schedule in two calls to scheduleSequentially is illegal" by making Schedule only describe the schedule, and representing the execution plan by a separate trait Plan, with instances returned by the scheduleSequentially operation?
+	 * Because this would require operations on Duty and Task that use scheduleSequentially to include an instance of Plan along with the result.
+	 * This would necessitate a tuple, which not only requires additional memory allocation but also complicates the chaining of operations.
+	 * */
+	trait Assistant { self: Doer.Assistant =>
+		/** Represents a schedule and also serves as an identifier for, or as, the execution-program entity created by the [[scheduleSequentially]] method.
+		 * Determines a schedule and also identifies, or is, the execution-program entity created based on it by the [[scheduleSequentially]] method.
+		 * Therefore, it is illegal to use the same instance in more than one call to [[scheduleSequentially]].
+		 * Instances of this type may be the execution-program entity itself instead of just an identifier of it, in which case it necessarily would be mutated by the [[scheduleSequentially]] method and might expose information about the state of the execution-program. */
 		type Schedule
 
+		/** Creates a [[Schedule]] for a single time execution after a delay.
+		 * @param delay duration before the execution.
+		 * @return a [[Schedule]] instance intended solely as an argument for a single call to the [[scheduleSequentially]] method. */
 		def newDelaySchedule(delay: NanoDuration): Schedule
 
-		def newFixedRateSchedule(initialDelay: NanoDuration, interval: NanoDuration): Schedule & FixedRateLike
+		/** Creates a [[Schedule]] for a fixed rate repeated execution after an initial delay.
+		 * @param initialDelay duration before the first execution.
+		 * @param interval duration between the scheduled time of the executions.
+		 * @return a [[Schedule]] instance intended solely as an argument for a single call to the [[scheduleSequentially]] method. */
+		def newFixedRateSchedule(initialDelay: NanoDuration, interval: NanoDuration): Schedule
 
+		/** Creates a [[Schedule]] for a fixed delay repeated execution after an initial delay.
+		 * @param initialDelay duration before the first execution.
+		 * @param delay duration between the end of an execution and the scheduled start of the next.
+		 * @return a [[Schedule]] instance intended solely as an argument for a single call to the [[scheduleSequentially]] method. */
 		def newFixedDelaySchedule(initialDelay: NanoDuration, delay: NanoDuration): Schedule
 
-		/** The implementation should not throw non-fatal exceptions. */
-		def executeSequentiallyScheduled(schedule: Schedule, runnable: Runnable): Unit
+		/** Programs the execution of the provided [[Runnable]] according to the provided [[Schedule]].
+		 * The implementation must ensure mutual sequentiality of the execution of [[Runnable]]s passed to [[self.executeSequentially]].
+		 * @param schedule determines when the provided [[runnable]] will be run.
+		 * @param runnable the [[Runnable]] to be run according to the provided [[schedule]].
+		 * The implementation should not throw non-fatal exceptions. */
+		def scheduleSequentially(schedule: Schedule, runnable: Runnable): Unit
 
-		/** The implementation should not throw non-fatal exceptions. */
+		/**
+		 * Removes the execution-program entity corresponding to the provided [[Schedule]] from the priority queue. A single execution may occur even after this method returns if called near its scheduled time.
+		 * The implementation should not throw non-fatal exceptions. */
 		def cancel(schedule: Schedule): Unit
 
+		/**
+		 * Removes all the execution-program entities corresponding to this [[Assistant]] instance from the priority queue. A single execution of each may occur even after this method returns if called near their scheduled time.
+		 * The implementation should not throw non-fatal exceptions. */
 		def cancelAll(): Unit
 
 		def isActive(schedule: Schedule): Boolean
 	}
 }
 
-/** Extends [[Doer]] with operations that require time delays. */
-trait TimersExtension { self: Doer =>
+/** Extends the [[Doer]] trait and its [[Duty]] and [[Task]] inner traits with scheduling operations. */
+trait SchedulingExtension { self: Doer =>
 
-	type TimedAssistant <: TimersExtension.Assistant
+	type SchedulingAssistant <: SchedulingExtension.Assistant
 
-	val timedAssistant: TimedAssistant
+	val schedulingAssistant: SchedulingAssistant
 
-	type Schedule = timedAssistant.Schedule
+	export schedulingAssistant.{Schedule, newDelaySchedule, newFixedRateSchedule, newFixedDelaySchedule, cancel, cancelAll}
 
-	inline def newDelaySchedule(delay: NanoDuration): Schedule =
-		timedAssistant.newDelaySchedule(delay)
-
-	inline def newFixedRateSchedule(initialDelay: NanoDuration, interval: NanoDuration): Schedule =
-		timedAssistant.newFixedRateSchedule(initialDelay, interval)
-
-	inline def executeSequentiallyScheduled(schedule: Schedule)(runnable: Runnable): Unit =
-		timedAssistant.executeSequentiallyScheduled(schedule, runnable)
-
-	inline def cancel(schedule: Schedule): Unit =
-		timedAssistant.cancel(schedule)
-
-	inline def cancelAll(): Unit =
-		timedAssistant.cancelAll()
-
+	inline def scheduleSequentially(schedule: Schedule)(runnable: Runnable): Unit =
+		schedulingAssistant.scheduleSequentially(schedule, runnable)
 
 	//// Duty extension ////
 
@@ -93,7 +94,7 @@ trait TimersExtension { self: Doer =>
 		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).map(f).scheduled(schedule)) }}} but more efficient. */
 		def mapScheduled[B](schedule: Schedule)(f: A => B): Duty[B] = new Duty[B] {
 			override def engage(onComplete: B => Unit): Unit = {
-				thisDuty.engagePortal { a => executeSequentiallyScheduled(schedule) { () => onComplete(f(a)) } }
+				thisDuty.engagePortal { a => scheduleSequentially(schedule) { () => onComplete(f(a)) } }
 			}
 		}
 
@@ -110,7 +111,7 @@ trait TimersExtension { self: Doer =>
 		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).flatMap(f).scheduled(schedule)) }}} but more efficient. */
 		def flatMapScheduled[B](schedule: Schedule)(f: A => Duty[B]): Duty[B] = new Duty[B] {
 			override def engage(onComplete: B => Unit): Unit = {
-				thisDuty.engagePortal { a => executeSequentiallyScheduled(schedule) { () => f(a).engagePortal(onComplete) } }
+				thisDuty.engagePortal { a => scheduleSequentially(schedule) { () => f(a).engagePortal(onComplete) } }
 			}
 		}
 
@@ -165,7 +166,7 @@ trait TimersExtension { self: Doer =>
 
 	final class Scheduled[A, B](duty: Duty[A], schedule: Schedule) extends Duty[A] {
 		override def engage(onComplete: A => Unit): Unit =
-			executeSequentiallyScheduled(schedule)(() => duty.engagePortal(onComplete))
+			scheduleSequentially(schedule)(() => duty.engagePortal(onComplete))
 	}
 
 	/** Used by [[timeLimited]] and [[timeBounded]].
@@ -181,7 +182,7 @@ trait TimersExtension { self: Doer =>
 					onComplete(f(Maybe.some(a)))
 				}
 			}
-			executeSequentiallyScheduled(timeout) {
+			scheduleSequentially(timeout) {
 				() =>
 					if (!hasCompleted) {
 						hasElapsed = true;
@@ -201,7 +202,7 @@ trait TimersExtension { self: Doer =>
 
 	final class Book[A](schedule: Schedule, supplier: Supplier[A]) extends Duty[A] {
 		override def engage(onComplete: A => Unit): Unit =
-			executeSequentiallyScheduled(schedule)(() => onComplete(supplier.get))
+			scheduleSequentially(schedule)(() => onComplete(supplier.get))
 	}
 
 	//// Task extension ////
@@ -211,7 +212,7 @@ trait TimersExtension { self: Doer =>
 		/** Like [[Duty.scheduled]] but for [[Task]]s. */
 		def appointed(schedule: Schedule): Task[A] = new Task[A] {
 			override def engage(onComplete: Try[A] => Unit): Unit = {
-				executeSequentiallyScheduled(schedule)(() => thisTask.engagePortal(onComplete))
+				scheduleSequentially(schedule)(() => thisTask.engagePortal(onComplete))
 			}
 		}
 
@@ -281,7 +282,7 @@ trait TimersExtension { self: Doer =>
 
 		def appoint[A](schedule: Schedule)(supplier: Supplier[A]): Task[A] = new Task[A] {
 			override def engage(onComplete: Try[A] => Unit): Unit = {
-				executeSequentiallyScheduled(schedule) { () =>
+				scheduleSequentially(schedule) { () =>
 					try onComplete(Success(supplier.get))
 					catch {
 						case NonFatal(e) => onComplete(Failure(e))
@@ -325,7 +326,7 @@ trait TimersExtension { self: Doer =>
 					case Success(mtA) =>
 						mtA.fold {
 							if (remainingExecutions > 1) {
-								executeSequentiallyScheduled(delay) { () => loop(remainingExecutions - 1) }
+								scheduleSequentially(delay) { () => loop(remainingExecutions - 1) }
 							} else
 								onComplete(Success(Maybe.empty))
 						} {

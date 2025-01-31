@@ -4,46 +4,42 @@ import ActorBasedDoer.Procedure
 
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{Behavior, Scheduler}
-import readren.taskflow.TimersExtension
-import readren.taskflow.TimersExtension.{FixedRateLike, NanoDuration, NanoTime}
+import readren.taskflow.SchedulingExtension
+import readren.taskflow.SchedulingExtension.NanoDuration
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.FiniteDuration
 import scala.reflect.Typeable
 
-object ActorBasedTimedDoer {
-	trait TimedAide extends ActorBasedDoer.Aide, TimersExtension.Assistant
+object ActorBasedSchedulingDoer {
+	trait SchedulingAide extends ActorBasedDoer.Aide, SchedulingExtension.Assistant
 
-	private val currentTimedAide: ThreadLocal[TimedAide] = new ThreadLocal()
+	private val currentTimedAide: ThreadLocal[SchedulingAide] = new ThreadLocal()
 
 	sealed trait Plan
 
 	case class SingleTime(delay: NanoDuration) extends Plan
 
-	case class FixedRate(initialDelay: NanoDuration, interval: NanoDuration) extends Plan, FixedRateLike {
-		var startingTime: NanoTime = 0
-
-		override def numOfSkippedExecutions: Long = -1
-	}
+	case class FixedRate(initialDelay: NanoDuration, interval: NanoDuration) extends Plan
 
 	case class FixedDelay(initialDelay: NanoDuration, delay: NanoDuration) extends Plan
 
 
-	def setup[A: Typeable](ctxA: ActorContext[A], timerScheduler: TimerScheduler[A])(frontier: ActorBasedTimedDoer => Behavior[A]): Behavior[A] = {
+	def setup[A: Typeable](ctxA: ActorContext[A], timerScheduler: TimerScheduler[A])(frontier: ActorBasedSchedulingDoer => Behavior[A]): Behavior[A] = {
 		val aide = buildTimedAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]])
-		val doer: ActorBasedTimedDoer = new ActorBasedTimedDoer(aide);
+		val doer: ActorBasedSchedulingDoer = new ActorBasedSchedulingDoer(aide);
 		val behaviorA = frontier(doer)
 		val interceptor = ActorBasedDoer.buildProcedureInterceptor[A](aide)
 		Behaviors.intercept(() => interceptor)(behaviorA).narrow
 	}
 
-	private def buildTimedAide[A >: Procedure](ctx: ActorContext[A], timerScheduler: TimerScheduler[A]): TimedAide = {
+	private def buildTimedAide[A >: Procedure](ctx: ActorContext[A], timerScheduler: TimerScheduler[A]): SchedulingAide = {
 		val aide = ActorBasedDoer.buildAide(ctx)
-		new TimedAide {
+		new SchedulingAide {
 			override def executeSequentially(runnable: Runnable): Unit =
 				aide.executeSequentially(runnable)
 
-			override def current: TimedAide =
+			override def current: SchedulingAide =
 				currentTimedAide.get
 
 			override def reportFailure(cause: Throwable): Unit =
@@ -60,7 +56,7 @@ object ActorBasedTimedDoer {
 
 			override def newFixedDelaySchedule(initialDelay: NanoDuration, delay: NanoDuration): FixedDelay = FixedDelay(initialDelay, delay)
 
-			override def executeSequentiallyScheduled(schedule: Schedule, runnable: Runnable): Unit = {
+			override def scheduleSequentially(schedule: Schedule, runnable: Runnable): Unit = {
 				schedule match {
 					case SingleTime(delay) => timerScheduler.startSingleTimer(schedule, Procedure(runnable), FiniteDuration(delay, TimeUnit.NANOSECONDS))
 					case FixedRate(initialDelay, interval) => timerScheduler.startTimerAtFixedRate(schedule, Procedure(runnable), FiniteDuration(initialDelay, TimeUnit.NANOSECONDS), FiniteDuration(interval, TimeUnit.NANOSECONDS))
@@ -81,7 +77,7 @@ object ActorBasedTimedDoer {
 }
 
 /** An [[ActorBasedDoer]] that support operation that require time delays. */
-class ActorBasedTimedDoer(timedAide: ActorBasedTimedDoer.TimedAide) extends ActorBasedDoer(timedAide), TimersExtension {
-	override type TimedAssistant = ActorBasedTimedDoer.TimedAide
-	override val timedAssistant: TimedAssistant = timedAide
+class ActorBasedSchedulingDoer(timedAide: ActorBasedSchedulingDoer.SchedulingAide) extends ActorBasedDoer(timedAide), SchedulingExtension {
+	override type SchedulingAssistant = ActorBasedSchedulingDoer.SchedulingAide
+	override val schedulingAssistant: SchedulingAssistant = timedAide
 }
