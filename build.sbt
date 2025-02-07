@@ -1,8 +1,8 @@
-ThisBuild / version := "0.2.5-SNAPSHOT"
+ThisBuild / version := "0.2.6-SNAPSHOT"
 
 ThisBuild / scalaVersion := "3.6.2"
 
-val AkkaVersion = "2.9.5"
+val AkkaVersion = "2.10.1"
 
 // Core library project without Akka dependencies
 lazy val library = (project in file("core"))

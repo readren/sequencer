@@ -1,14 +1,14 @@
 package readren.taskflow.akka
 
-import scala.annotation.tailrec
-import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.concurrent.duration.FiniteDuration
-import scala.reflect.ClassTag
-import scala.util.{Failure, Success, Try}
-import scala.util.control.NonFatal
-
 import akka.actor.{Actor, ActorRef, Timers}
 import akka.pattern.ask
+
+import scala.annotation.tailrec
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.reflect.ClassTag
+import scala.util.control.NonFatal
+import scala.util.{Failure, Success, Try}
 
 /** Herramienta que facilita el uso de [[Future]]s en un [[Actor]]; y hace que sea mas claro de entender el orden en que se ejecutan los sectores de código cuando existen sectores que no son ejecutados por este actor.
  * Usando esta herramienta el código luce mas declarativo, y se reduce  (o incluso anula) la cantidad de variables de estado del [[Actor]].
@@ -823,7 +823,7 @@ object AmigoFuturesYTimers {
 
 trait AmigoFuturesYTimers extends AmigoFutures with Timers { actor: Actor =>
 
-	import AmigoFuturesYTimers._;
+	import AmigoFuturesYTimers.*;
 
 	private var secuenciador: Long = 0;
 

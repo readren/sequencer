@@ -18,7 +18,7 @@ object SchedulingExtension {
 	 * Because this would require operations on Duty and Task that use scheduleSequentially to include an instance of Plan along with the result.
 	 * This would necessitate a tuple, which not only requires additional memory allocation but also complicates the chaining of operations.
 	 * */
-	trait Assistant { self: Doer.Assistant =>
+	trait Assistant extends Doer.Assistant {
 		/** Represents a schedule and also serves as an identifier for, or as, the execution-program entity created by the [[scheduleSequentially]] method.
 		 * Determines a schedule and also identifies, or is, the execution-program entity created based on it by the [[scheduleSequentially]] method.
 		 * Therefore, it is illegal to use the same instance in more than one call to [[scheduleSequentially]].
@@ -43,7 +43,7 @@ object SchedulingExtension {
 		def newFixedDelaySchedule(initialDelay: NanoDuration, delay: NanoDuration): Schedule
 
 		/** Programs the execution of the provided [[Runnable]] according to the provided [[Schedule]].
-		 * The implementation must ensure mutual sequentiality of the execution of [[Runnable]]s passed to [[self.executeSequentially]].
+		 * The implementation must ensure mutual sequentiality of the execution of [[Runnable]]s passed to [[executeSequentially]].
 		 * @param schedule determines when the provided [[runnable]] will be run.
 		 * @param runnable the [[Runnable]] to be run according to the provided [[schedule]].
 		 * The implementation should not throw non-fatal exceptions. */
@@ -64,16 +64,14 @@ object SchedulingExtension {
 }
 
 /** Extends the [[Doer]] trait and its [[Duty]] and [[Task]] inner traits with scheduling operations. */
-trait SchedulingExtension { self: Doer =>
+trait SchedulingExtension { thisSchedulingExtension: Doer =>
 
-	type SchedulingAssistant <: SchedulingExtension.Assistant
+	override type Assistant <: SchedulingExtension.Assistant
 
-	val schedulingAssistant: SchedulingAssistant
-
-	export schedulingAssistant.{Schedule, newDelaySchedule, newFixedRateSchedule, newFixedDelaySchedule, cancel, cancelAll}
+	export assistant.{Schedule, newDelaySchedule, newFixedRateSchedule, newFixedDelaySchedule, cancel, cancelAll}
 
 	inline def scheduleSequentially(schedule: Schedule)(runnable: Runnable): Unit =
-		schedulingAssistant.scheduleSequentially(schedule, runnable)
+		assistant.scheduleSequentially(schedule, runnable)
 
 	//// Duty extension ////
 
@@ -143,7 +141,7 @@ trait SchedulingExtension { self: Doer =>
 		 * @return a [[Duty]] that wraps the result of this duty with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
 		 */
 		inline def timeLimited(timeout: FiniteDuration): Duty[Maybe[A]] =
-			timeLimited(newDelaySchedule(timeout.toNanos))
+			new TimeLimited[A, Maybe[A]](thisDuty, newDelaySchedule(timeout.toNanos), identity)
 
 		/**
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but retries its execution if it does not complete within the delay of the specified [[Schedule]].

@@ -1,7 +1,7 @@
 package readren.taskflow.akka
 
-import akka.actor.typed.scaladsl.{Behaviors, LoggerOps}
 import akka.actor.typed.*
+import akka.actor.typed.scaladsl.{Behaviors, LoggerOps}
 
 
 object Test {
@@ -23,7 +23,7 @@ object Test {
 				Behaviors.setup { actorContext =>
 					ActorBasedDoer.setup(actorContext) { taskContext =>
 						Behaviors.receiveMessage { pregunta =>
-							taskContext.Task.successful(Respuesta(actorContext.self, "Hola")).attemptAndSend(pregunta.replyTo, true)
+							taskContext.Task.successful(Respuesta(actorContext.self, "Hola")).triggerAndSend(pregunta.replyTo, true)
 
 							Behaviors.same
 						}

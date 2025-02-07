@@ -1,10 +1,11 @@
 package readren.taskflow.akka
 
 import ActorBasedDoer.Procedure
+import ActorBasedSchedulingDoer.SchedulingAide
 
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{Behavior, Scheduler}
-import readren.taskflow.SchedulingExtension
+import readren.taskflow.{AbstractDoer, SchedulingExtension}
 import readren.taskflow.SchedulingExtension.NanoDuration
 
 import java.util.concurrent.TimeUnit
@@ -12,9 +13,8 @@ import scala.concurrent.duration.FiniteDuration
 import scala.reflect.Typeable
 
 object ActorBasedSchedulingDoer {
-	trait SchedulingAide extends ActorBasedDoer.Aide, SchedulingExtension.Assistant
 
-	private val currentTimedAide: ThreadLocal[SchedulingAide] = new ThreadLocal()
+	trait SchedulingAide extends ActorExtension.Aide, SchedulingExtension.Assistant
 
 	sealed trait Plan
 
@@ -24,29 +24,29 @@ object ActorBasedSchedulingDoer {
 
 	case class FixedDelay(initialDelay: NanoDuration, delay: NanoDuration) extends Plan
 
-
+	/** A [[Behavior]] factory that provides access to an [[ActorBasedSchedulingDoer]] whose DoSiThEx (doer single thread executor) is the actor corresponding to the provided [[ActorContext]]. */
 	def setup[A: Typeable](ctxA: ActorContext[A], timerScheduler: TimerScheduler[A])(frontier: ActorBasedSchedulingDoer => Behavior[A]): Behavior[A] = {
-		val aide = buildTimedAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]])
+		val aide = buildSchedulingAide(ctxA.asInstanceOf[ActorContext[Procedure]], timerScheduler.asInstanceOf[TimerScheduler[Procedure]])
 		val doer: ActorBasedSchedulingDoer = new ActorBasedSchedulingDoer(aide);
 		val behaviorA = frontier(doer)
 		val interceptor = ActorBasedDoer.buildProcedureInterceptor[A](aide)
 		Behaviors.intercept(() => interceptor)(behaviorA).narrow
 	}
 
-	private def buildTimedAide[A >: Procedure](ctx: ActorContext[A], timerScheduler: TimerScheduler[A]): SchedulingAide = {
+	private def buildSchedulingAide[A >: Procedure](ctx: ActorContext[A], timerScheduler: TimerScheduler[A]): SchedulingAide = {
 		val aide = ActorBasedDoer.buildAide(ctx)
 		new SchedulingAide {
 			override def executeSequentially(runnable: Runnable): Unit =
 				aide.executeSequentially(runnable)
 
-			override def current: SchedulingAide =
-				currentTimedAide.get
+			override def current: ActorExtension.Aide =
+				ActorBasedDoer.currentAssistant.get
 
 			override def reportFailure(cause: Throwable): Unit =
 				aide.reportFailure(cause)
 
-			override def scheduler: Scheduler =
-				aide.scheduler
+			override def akkaScheduler: Scheduler =
+				aide.akkaScheduler
 
 			override type Schedule = Plan
 
@@ -76,8 +76,8 @@ object ActorBasedSchedulingDoer {
 	}
 }
 
-/** An [[ActorBasedDoer]] that support operation that require time delays. */
-class ActorBasedSchedulingDoer(timedAide: ActorBasedSchedulingDoer.SchedulingAide) extends ActorBasedDoer(timedAide), SchedulingExtension {
-	override type SchedulingAssistant = ActorBasedSchedulingDoer.SchedulingAide
-	override val schedulingAssistant: SchedulingAssistant = timedAide
+/** A [[Doer]], extended with scheduling and akka-actor related operations, whose DoSiThEx (doer single thread executor) is an akka-actor. */
+class ActorBasedSchedulingDoer(schedulingAide: SchedulingAide) extends AbstractDoer, ActorExtension, SchedulingExtension {
+	override type Assistant = SchedulingAide
+	override val assistant: Assistant = schedulingAide
 }

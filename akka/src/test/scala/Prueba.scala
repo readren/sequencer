@@ -1,15 +1,15 @@
 package readren.taskflow.akka
 
-import akka.actor.typed.scaladsl.Behaviors
-import akka.actor.typed.{ActorRef, ActorSystem, Behavior, BehaviorInterceptor, Scheduler, TypedActorContext}
 import akka.actor.typed.scaladsl.AskPattern.*
+import akka.actor.typed.scaladsl.Behaviors
+import akka.actor.typed.*
 import akka.util.Timeout
 
-import scala.util.{Failure, Success, Try}
 import java.util.concurrent.TimeUnit
 import scala.concurrent.ExecutionContext
 import scala.io.StdIn
 import scala.reflect.ClassTag
+import scala.util.{Failure, Success, Try}
 
 object Prueba {
 	case class RunProcedure(procedure: () => Unit) extends AnyVal
@@ -55,6 +55,8 @@ object Prueba {
 				case Pregunta(replyTo, "¿Qué tal?") =>
 					replyTo ! Respuesta(ctx.self, "Muy bien, ¿y vos?")
 					Behaviors.same
+					
+				case _ => throw AssertionError()	
 			}
 		}
 	}
@@ -114,8 +116,8 @@ object Prueba {
 				Behaviors.receiveMessage {
 					case Pregunta(replyTo1, "Hola") =>
 						val task = for {
-							case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.query[Pregunta](ref => Respuesta(ref, "Hola también"))
-							_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
+							case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.queries[Pregunta](ref => Respuesta(ref, "Hola también"))
+							_ <- replyTo2.says(Respuesta(null, "Muy bien, ¿y vos?"))
 						} yield ()
 						task.trigger(true) { x => ctx.log.info(s"resultado final: $x") }
 						Behaviors.same
@@ -131,8 +133,8 @@ object Prueba {
 
 				val flow = Flow.wrap[ActorRef[Respuesta], Try[Unit]] { replyTo1 =>
 					for {
-						case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.query[Pregunta](ref => Respuesta(ref, "Hola también"))
-						_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
+						case Pregunta(replyTo2, "¿Qué tal?") <- replyTo1.queries[Pregunta](ref => Respuesta(ref, "Hola también"))
+						_ <- replyTo2.says(Respuesta(null, "Muy bien, ¿y vos?"))
 					} yield ()					
 				}
 				Behaviors.receiveMessage {
@@ -153,7 +155,7 @@ object Prueba {
 					case Pregunta(replyTo2, "¿Qué tal?") =>
 						val task = for {
 							_ <- Task.mine(() => ctx.log.info("sigue funcionando"))
-							_ <- replyTo2.say(Respuesta(null, "Muy bien, ¿y vos?"))
+							_ <- replyTo2.says(Respuesta(null, "Muy bien, ¿y vos?"))
 						} yield ()
 						task.trigger(true)(rf => ctx.log.info(s"resultado final: $rf"))
 						Behaviors.same
