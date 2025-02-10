@@ -6,7 +6,7 @@ import ActorBasedSchedulingDoer.SchedulingAide
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{Behavior, Scheduler}
 import readren.taskflow.{AbstractDoer, SchedulingExtension}
-import readren.taskflow.SchedulingExtension.NanoDuration
+import readren.taskflow.SchedulingExtension.MilliDuration
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.FiniteDuration
@@ -18,11 +18,11 @@ object ActorBasedSchedulingDoer {
 
 	sealed trait Plan
 
-	case class SingleTime(delay: NanoDuration) extends Plan
+	case class SingleTime(delay: MilliDuration) extends Plan
 
-	case class FixedRate(initialDelay: NanoDuration, interval: NanoDuration) extends Plan
+	case class FixedRate(initialDelay: MilliDuration, interval: MilliDuration) extends Plan
 
-	case class FixedDelay(initialDelay: NanoDuration, delay: NanoDuration) extends Plan
+	case class FixedDelay(initialDelay: MilliDuration, delay: MilliDuration) extends Plan
 
 	/** A [[Behavior]] factory that provides access to an [[ActorBasedSchedulingDoer]] whose DoSiThEx (doer single thread executor) is the actor corresponding to the provided [[ActorContext]]. */
 	def setup[A: Typeable](ctxA: ActorContext[A], timerScheduler: TimerScheduler[A])(frontier: ActorBasedSchedulingDoer => Behavior[A]): Behavior[A] = {
@@ -50,17 +50,17 @@ object ActorBasedSchedulingDoer {
 
 			override type Schedule = Plan
 
-			override def newDelaySchedule(delay: NanoDuration): SingleTime = SingleTime(delay)
+			override def newDelaySchedule(delay: MilliDuration): SingleTime = SingleTime(delay)
 
-			override def newFixedRateSchedule(initialDelay: NanoDuration, interval: NanoDuration): FixedRate = FixedRate(initialDelay, interval)
+			override def newFixedRateSchedule(initialDelay: MilliDuration, interval: MilliDuration): FixedRate = FixedRate(initialDelay, interval)
 
-			override def newFixedDelaySchedule(initialDelay: NanoDuration, delay: NanoDuration): FixedDelay = FixedDelay(initialDelay, delay)
+			override def newFixedDelaySchedule(initialDelay: MilliDuration, delay: MilliDuration): FixedDelay = FixedDelay(initialDelay, delay)
 
 			override def scheduleSequentially(schedule: Schedule, runnable: Runnable): Unit = {
 				schedule match {
-					case SingleTime(delay) => timerScheduler.startSingleTimer(schedule, Procedure(runnable), FiniteDuration(delay, TimeUnit.NANOSECONDS))
-					case FixedRate(initialDelay, interval) => timerScheduler.startTimerAtFixedRate(schedule, Procedure(runnable), FiniteDuration(initialDelay, TimeUnit.NANOSECONDS), FiniteDuration(interval, TimeUnit.NANOSECONDS))
-					case FixedDelay(initialDelay, delay) => timerScheduler.startTimerWithFixedDelay(schedule, Procedure(runnable), FiniteDuration(initialDelay, TimeUnit.NANOSECONDS), FiniteDuration(delay, TimeUnit.NANOSECONDS))
+					case SingleTime(delay) => timerScheduler.startSingleTimer(schedule, Procedure(runnable), FiniteDuration(delay, TimeUnit.MILLISECONDS))
+					case FixedRate(initialDelay, interval) => timerScheduler.startTimerAtFixedRate(schedule, Procedure(runnable), FiniteDuration(initialDelay, TimeUnit.MILLISECONDS), FiniteDuration(interval, TimeUnit.MILLISECONDS))
+					case FixedDelay(initialDelay, delay) => timerScheduler.startTimerWithFixedDelay(schedule, Procedure(runnable), FiniteDuration(initialDelay, TimeUnit.MILLISECONDS), FiniteDuration(delay, TimeUnit.MILLISECONDS))
 				}
 			}
 

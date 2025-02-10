@@ -1,16 +1,17 @@
 package readren.taskflow
 
-import SchedulingExtension.NanoDuration
+import SchedulingExtension.MilliDuration
 
-import java.util.function.{Consumer, Supplier}
+import java.util.function.Supplier
 import scala.concurrent.duration.FiniteDuration
-import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
+import scala.util.{Failure, Success, Try}
 
 
 object SchedulingExtension {
 
-	type NanoDuration = Long
+	/** A duration in milliseconds. */
+	type MilliDuration = Long
 
 	/** Specifies what an instance of [[Doer]] extended with the [[SchedulingExtension]] requires to exist.
 	 *
@@ -28,19 +29,19 @@ object SchedulingExtension {
 		/** Creates a [[Schedule]] for a single time execution after a delay.
 		 * @param delay duration before the execution.
 		 * @return a [[Schedule]] instance intended solely as an argument for a single call to the [[scheduleSequentially]] method. */
-		def newDelaySchedule(delay: NanoDuration): Schedule
+		def newDelaySchedule(delay: MilliDuration): Schedule
 
 		/** Creates a [[Schedule]] for a fixed rate repeated execution after an initial delay.
 		 * @param initialDelay duration before the first execution.
 		 * @param interval duration between the scheduled time of the executions.
 		 * @return a [[Schedule]] instance intended solely as an argument for a single call to the [[scheduleSequentially]] method. */
-		def newFixedRateSchedule(initialDelay: NanoDuration, interval: NanoDuration): Schedule
+		def newFixedRateSchedule(initialDelay: MilliDuration, interval: MilliDuration): Schedule
 
 		/** Creates a [[Schedule]] for a fixed delay repeated execution after an initial delay.
 		 * @param initialDelay duration before the first execution.
 		 * @param delay duration between the end of an execution and the scheduled start of the next.
 		 * @return a [[Schedule]] instance intended solely as an argument for a single call to the [[scheduleSequentially]] method. */
-		def newFixedDelaySchedule(initialDelay: NanoDuration, delay: NanoDuration): Schedule
+		def newFixedDelaySchedule(initialDelay: MilliDuration, delay: MilliDuration): Schedule
 
 		/** Programs the execution of the provided [[Runnable]] according to the provided [[Schedule]].
 		 * The implementation must ensure mutual sequentiality of the execution of [[Runnable]]s passed to [[executeSequentially]].
@@ -84,7 +85,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 
 		/** Returns a [[Duty]] that behaves the same as `thisDuty`, but its execution starts only after the provided `delay`, measured from the moment it is triggered. */
 		def delayed(delay: FiniteDuration): Duty[A] =
-			scheduled(newDelaySchedule(delay.toNanos))
+			scheduled(newDelaySchedule(delay.toMillis))
 
 		/** Like [[Duty.map]] but the function application is scheduled.
 		 * Note that what is scheduled is the start of the function application, not the execution of `thisDuty`. The schedule's delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
@@ -100,7 +101,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * Note that what is delayed is the start of function application, not the start of the execution of `thisDuty`. The delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
 		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).map(f).delayed(delay)) }}} but more efficient. */
 		def mapDelayed[B](delay: FiniteDuration)(f: A => B): Duty[B] =
-			mapScheduled(newDelaySchedule(delay.toNanos))(f)
+			mapScheduled(newDelaySchedule(delay.toMillis))(f)
 
 
 		/** Like [[Duty.flatMap]] but the function application is scheduled.
@@ -117,7 +118,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * Note that what is delayed is the function application, not the execution of `thisDuty`. The delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
 		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).flatMap(f).delayed(delay)) }}} but more efficient. */
 		def flatMapDelayed[B](delay: FiniteDuration)(f: A => Duty[B]): Duty[B] =
-			flatMapScheduled(newDelaySchedule(delay.toNanos))(f)
+			flatMapScheduled(newDelaySchedule(delay.toMillis))(f)
 
 		/**
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but wraps its result in [[Maybe.some]] if the duty's execution takes less time than the delay of the provided [[Schedule]].
@@ -141,7 +142,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * @return a [[Duty]] that wraps the result of this duty with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
 		 */
 		inline def timeLimited(timeout: FiniteDuration): Duty[Maybe[A]] =
-			new TimeLimited[A, Maybe[A]](thisDuty, newDelaySchedule(timeout.toNanos), identity)
+			new TimeLimited[A, Maybe[A]](thisDuty, newDelaySchedule(timeout.toMillis), identity)
 
 		/**
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but retries its execution if it does not complete within the delay of the specified [[Schedule]].
@@ -195,7 +196,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 			new Book(schedule, supplier)
 
 		def delay[A](duration: FiniteDuration)(supplier: Supplier[A]): Duty[A] =
-			new Book(newDelaySchedule(duration.toNanos), supplier)
+			new Book(newDelaySchedule(duration.toMillis), supplier)
 	}
 
 	final class Book[A](schedule: Schedule, supplier: Supplier[A]) extends Duty[A] {
@@ -217,7 +218,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 
 		/** Like [[Duty.delayed]] but for [[Task]]s. */
 		def postponed(delay: FiniteDuration): Task[A] =
-			appointed(newDelaySchedule(delay.toNanos))
+			appointed(newDelaySchedule(delay.toMillis))
 
 		/**
 		 * Returns a [[Task]] that behaves the same as `thisTask` but wraps its result in [[Maybe.some]] if the task's execution takes less time than the delay of the provided [[Schedule]].
@@ -244,7 +245,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * @return a [[Duty]] that wraps the result of this duty with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
 		 */
 		def timeBounded(timeout: FiniteDuration): Task[Maybe[A]] =
-			timeBounded(newDelaySchedule(timeout.toNanos))
+			timeBounded(newDelaySchedule(timeout.toMillis))
 
 		/**
 		 * Returns a [[Task]] that behaves the same as `thisTask` but retries its execution if it does not complete within the specified `timeout`.
@@ -256,7 +257,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * @return a [[Task]] that produces [[Maybe[A]]] indicating the result of the task execution, or [[Maybe.empty]] if it fails to complete within the allowed retries
 		 */
 		def reiteratedWhileTimeout(timeout: FiniteDuration, maxRetries: Int): Task[Maybe[A]] = {
-			thisTask.timeBounded(newDelaySchedule(timeout.toNanos)).reiteratedHardyUntilSome[Maybe[A]](Integer.MAX_VALUE) { (retries, result) =>
+			thisTask.timeBounded(newDelaySchedule(timeout.toMillis)).reiteratedHardyUntilSome[Maybe[A]](Integer.MAX_VALUE) { (retries, result) =>
 				result match {
 					case Success(mA) =>
 						mA.fold {
