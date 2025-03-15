@@ -13,11 +13,10 @@ object Doer {
 	/** Specifies what an instance of [[Doer]] requires to exist. */
 	trait Assistant {
 		/**
-		 * Executes the provided [[Runnable]] after all others that were provided before have completed.
-		 * The implementation should queue the execution of all the [[Runnable]]s this method receives on the same single-thread executor. Note that "single" does not imply "same". The thread may change.
-		 * From now on said executor will be called "the doer's single-thread executor" or DoSiThEx for short.
-		 * The implementation should guarantee that passed [[Runnable]]s are executed one after the other (no more than one [[Runnable]] will be active at any given time) and in the order of submission.
-		 * If the call is executed within the current DoSiThEx's [[Thread]], the [[Runnable]]'s execution must not start until the DoSiThEx completes its current execution and gets free to start a new one.
+		 * Executes the provided [[Runnable]] in the orden of submission after all the ones that were provided before to this [[Assistant]] instance have been completed.
+		 * The implementation should queue all the [[Runnable]]s this method receives while they are being executed sequentially. The thread that executes them can change as long as sequentiality and happens-before relationship are guaranteed.
+		 * From now on the executor of the queued [[Runnable]] instances will be called "the doer's single-thread executor", or DoSiThEx for short, despite more than one thread may be involved.
+		 * If the call is executed within the current DoSiThEx's [[Thread]], the [[Runnable]]'s execution must not start until the DoSiThEx completes its current execution and all the previously queued ones.
 		 * The implementation should not throw non-fatal exceptions.
 		 * The implementation should be thread-safe.
 		 *
@@ -48,8 +47,21 @@ object Doer {
 abstract class AbstractDoer extends Doer
 
 /**
- * Encloses the [[Task]]s instances that are executed by the same single-thread executor, which is called the DoSiThEx.
- * All the deferred actions preformed by the operations of the [[Task]]s enclosed by this [[Doer]] are executed by calling the [[executeSequentially]] method unless the method documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive.
+ * A '''Doer''' encloses [[Duty]] and [[Task]] instances, enforcing '''sequential execution''' of tasks and duties.
+ * This sequentiality is '''scoped to the duties and tasks enclosed by the same instance of Doer'''. Specifically:
+ *  - Duties and tasks created by the same '''Doer''' instance will execute sequentially relative to each other.
+ *  - Duties and tasks created by different '''Doer''' instances are '''independent''' and may execute concurrently or in any order.
+ *
+ * == Execution of Routines ==
+ * All routines (functions, procedures, predicates, or by-name parameters) passed to the operations of [[Duty]] and [[Task]]
+ * (including callbacks like `onComplete`) are also executed sequentially with respect to the duties and tasks enclosed by
+ * the same '''Doer''' instance. This ensures that all operations associated with a single '''Doer''' instance maintain sequential
+ * consistency, unless explicitly documented otherwise in the method's documentation.
+ *
+ * == Key Points ==
+ * - Sequential execution is '''instance-specific''': Each '''Doer''' instance manages its own sequence of tasks and duties.
+ * - Routines passed to tasks and duties (e.g., callbacks) are executed in the same sequential scope as the enclosing '''Doer''' instance.
+ * - Tasks and duties across different '''Doer''' instances are '''independent''' and may run concurrently.
  * ==Note:==
  * At the time of writing, almost all the operations and classes in this source file are thread-safe and may function properly on any kind of execution context. The only exceptions are the classes [[CombinedTask]] and [[Commitment]], which could be enhanced to support concurrency. However, given that a design goal was to allow [[Task]] and the functions their operators receive to close over variables in code sections guaranteed to be executed solely by the DoSiThEx (doer's single-threaded executor), the effort and cost of making them concurrent would be unnecessary.
  * See [[Doer.Assistant.executeSequentially()]].
@@ -73,7 +85,7 @@ trait Doer { thisDoer =>
 	val assistant: Assistant
 
 	/**
-	 * Queues the execution of the received [[Runnable]] in this $DoSiThEx. See [[Doer.Assistant.executeSequentially]]
+	 * Queues the execution of the received [[Runnable]] in the task-queue of this $DoSiThEx. See [[Doer.Assistant.executeSequentially]]
 	 * If the call is executed by the DoSiThEx the [[Runnable]]'s execution will not start until the DoSiThEx completes its current execution and gets free to start a new one.
 	 *
 	 * All the deferred actions preformed by the [[Task]] operations are executed by calling this method unless the particular operation documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive as.
@@ -446,14 +458,14 @@ trait Doer { thisDoer =>
 		 * This overload accepts any [[Iterable]] and is more efficient than the other (above). Especially for large iterables.
 		 * $threadSafe
 		 *
-		 * @param duties the `Iterable` of duties that the returned task will trigger simultaneously to combine their results.
 		 * @param factory the [[IterableFactory]] needed to build the [[Iterable]] that will contain the results. Note that most [[Iterable]] implementations' companion objects are an [[IterableFactory]].
+		 * @param duties the `Iterable` of duties that the returned task will trigger simultaneously to combine their results.
 		 * @tparam A the result type of all the duties
 		 * @tparam C the higher-kinded type of the `Iterable` of duties.
 		 * @tparam To the type of the `Iterable` that will contain the results.
 		 * @return the duty described in the method description.
 		 * */
-		def sequence[A: ClassTag, C[x] <: Iterable[x], To[_]](duties: C[Duty[A]])(using factory: IterableFactory[To]): Duty[To[A]] = {
+		def sequence[A: ClassTag, C[x] <: Iterable[x], To[_]](factory: IterableFactory[To], duties: C[Duty[A]]): Duty[To[A]] = {
 			sequenceToArray(duties).map { array =>
 				val builder = factory.newBuilder[A]
 				var index = 0
@@ -1482,14 +1494,14 @@ trait Doer { thisDoer =>
 		 * This overload accepts any [[Iterable]] and is more efficient than the other (above). Especially for large iterables.
 		 * $threadSafe
 		 *
-		 * @param tasks the `Iterable` of tasks that the returned task will trigger simultaneously to combine their results.
 		 * @param factory the [[IterableFactory]] needed to build the [[Iterable]] that will contain the results. Note that most [[Iterable]] implementations' companion objects are an [[IterableFactory]].
+		 * @param tasks the `Iterable` of tasks that the returned task will trigger simultaneously to combine their results.
 		 * @tparam A the result type of all the tasks.
 		 * @tparam C the higher-kinded type of the `Iterable` of tasks.
 		 * @tparam To the type of the `Iterable` that will contain the results.
 		 * @return the task described in the method description.
 		 * */
-		def sequence[A: ClassTag, C[x] <: Iterable[x], To[x] <: Iterable[x]](tasks: C[Task[A]])(using factory: IterableFactory[To]): Task[To[A]] = {
+		def sequence[A: ClassTag, C[x] <: Iterable[x], To[x] <: Iterable[x]](factory: IterableFactory[To], tasks: C[Task[A]]): Task[To[A]] = {
 			sequenceToArray(tasks).map { array =>
 				val builder = factory.newBuilder[A]
 				var index = 0
@@ -1516,7 +1528,7 @@ trait Doer { thisDoer =>
 		 * @tparam To the type of the `Iterable` that will contain the results.
 		 * @return the task described in the method description.
 		 * */
-		def sequenceHardy[A: ClassTag, C[x] <: Iterable[x], To[x] <: Iterable[x]](tasks: C[Task[A]])(using factory: IterableFactory[To]): Task[To[Try[A]]] = {
+		def sequenceHardy[A: ClassTag, C[x] <: Iterable[x], To[x] <: Iterable[x]](factory: IterableFactory[To], tasks: C[Task[A]]): Task[To[Try[A]]] = {
 			sequenceHardyToArray(tasks).map { array =>
 				val builder = factory.newBuilder[Try[A]]
 				var index = 0
