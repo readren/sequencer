@@ -24,6 +24,9 @@ final class Maybe[+A](private val value: Any) extends AnyVal {
 
 	inline def getOrElse[B >: A](default: B): B =
 		if isEmpty then default else value.asInstanceOf[A]
+		
+	inline def contains[A1 >:A](elem: A1): Boolean =
+		elem == value	
 }
 
 object Maybe {
