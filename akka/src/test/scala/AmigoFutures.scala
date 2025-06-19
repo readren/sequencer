@@ -237,7 +237,7 @@ trait AmigoFutures { actor: Actor =>
 		protected[AmigoFutures] def realizar(llameYo: Boolean)(cuandoCompleta: Try[A] => Unit): Unit;
 
 		def efectuar(llameYo: Boolean)(cuandoCompleta: Try[A] => Unit): Unit = {
-			if (llameYo && debug && Thread.currentThread() != hiloActualActor) {
+			if (llameYo && debug && (Thread.currentThread() ne hiloActualActor)) {
 				throw new AssertionError(s"currentThread=${Thread.currentThread.getName}, hiloActualActor=${hiloActualActor.getName}");
 			}
 			this.realizar(llameYo)(cuandoCompleta)

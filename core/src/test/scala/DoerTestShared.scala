@@ -117,14 +117,14 @@ class DoerTestShared[TD <: Doer](val doer: TD, synchronousOnly: Boolean = false)
 	given intGen: Gen[Int] = Gen.choose(-10, 10)
 
 	extension (e1: Throwable) {
-		def ====(e2: Throwable): Boolean = e1.getClass == e2.getClass && e1.getMessage == e2.getMessage
+		def ====(e2: Throwable): Boolean = (e1.getClass eq e2.getClass) && (e1.getMessage == e2.getMessage)
 	}
 
 	extension [A](try1: Try[A]) {
 		def ====(try2: Try[A]): Boolean = {
 			(try1, try2) match {
 				case (Failure(e1), Failure(e2)) => e1 ==== e2
-				case (Success(v1), Success(v2)) => v1 == v2
+				case (Success(v1), Success(v2)) => v1.equals(v2)
 				case _ => false
 			}
 		}

@@ -906,7 +906,7 @@ trait Doer { thisDoer =>
 		override def subscribe(onComplete: A => Unit): Unit = {
 			assert(assistant.isWithinDoSiThEx)
 			oResult.fold {
-				if firstOnCompleteObserver == null then firstOnCompleteObserver = onComplete
+				if firstOnCompleteObserver eq null then firstOnCompleteObserver = onComplete
 				else onCompletedObservers = onComplete :: onCompletedObservers
 			}(onComplete)
 		}
@@ -947,7 +947,7 @@ trait Doer { thisDoer =>
 				this.oResult = Maybe.some(result);
 				this.onCompletedObservers.foreach(_(result));
 				this.onCompletedObservers = Nil // Clean the observers list to help the garbage collector.
-				if firstOnCompleteObserver != null then {
+				if firstOnCompleteObserver ne null then {
 					firstOnCompleteObserver(result);
 					firstOnCompleteObserver = null // Clean the observers list to help the garbage collector.
 				}
@@ -2310,7 +2310,7 @@ trait Doer { thisDoer =>
 		override def subscribe(onComplete: Try[A] => Unit): Unit = {
 			assert(assistant.isWithinDoSiThEx)
 			oResult.fold {
-				if firstOnCompleteObserver == null then firstOnCompleteObserver = onComplete
+				if firstOnCompleteObserver eq null then firstOnCompleteObserver = onComplete
 				else onCompletedObservers = onComplete :: onCompletedObservers
 			}(onComplete)
 		}
@@ -2351,7 +2351,7 @@ trait Doer { thisDoer =>
 				oResult = Maybe.some(result);
 				onCompletedObservers.foreach(_(result));
 				onCompletedObservers = Nil; // unbind the observers list to help the garbage collector
-				if firstOnCompleteObserver != null then {
+				if firstOnCompleteObserver ne null then {
 					firstOnCompleteObserver(result)
 					firstOnCompleteObserver = null // unbind the observer reference to help the garbage collector
 				};

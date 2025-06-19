@@ -15,7 +15,7 @@ object DoerTestSync {
 	val currentAssistant: ThreadLocal[Doer.Assistant] = new ThreadLocal()
 }
 
-/** This suite is limited to synchronous tests and therefore it only tests part of the behavior of [[Doer]].
+/** This suite is limited to synchronous tests, and therefore, it only tests part of the behavior of [[Doer]].
  * All the behavior tested in this suite is also tested in the [[DoerTestEffect]] suite. 
  * This suite is kept despite the [[DoerTestEffect]] existence because it is easier to debug in a synchronous environment.
  * */

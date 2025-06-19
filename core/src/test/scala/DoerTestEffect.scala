@@ -86,7 +86,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 			a2 <- duty2.toFutureHardy()
 		} yield {
 			// println(s"$try1 ==== $try2")
-			a1 == a2
+			a1.equals(a2)
 		}
 		futureEquality.map(assert(_))
 	}
@@ -257,7 +257,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 				if NonFatal(exception) then {
 					// When the exception is non-fatal the task should complete with a Failure containing the exception thrown by the transformation.
 					val nonFatalWasHandled: Future[Boolean] = future.map {
-						case Failure(`exception`) => true
+						case Failure(e) if e.equals(exception) => true
 						case Failure(wrapper) if wrapper.getCause eq exception => true
 						case result =>
 							throw new AssertionError(s"The task completed but with an unexpected result. Expected: ${Failure(exception)}, Actual: $result")

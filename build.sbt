@@ -1,4 +1,4 @@
-ThisBuild / version := "0.2.8-SNAPSHOT"
+ThisBuild / version := "0.2.9-SNAPSHOT"
 
 ThisBuild / scalaVersion := "3.6.3"
 
@@ -49,6 +49,7 @@ ThisBuild / scalacOptions ++= Seq(
 	"-deprecation",
 	"-feature",
 	"-explain",
+	"-language:strictEquality",
 	"-Xcheck-macros", // This flag enables extra runtime checks that try to find ill-formed trees or types as soon as they are created.
 	"-Ycheck:all", // This flag checks all compiler invariants for tree well-formedness. These checks will usually fail with an assertion error.
 	// "-Xprint:macro", // Prints all compilation phases (including macro transformations)
