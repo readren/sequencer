@@ -30,7 +30,7 @@ object Doer {
 		def current: Assistant | Null
 
 		/**
-		 * @return true if the current [[java.lang.Thread]] corresponds to the DoSiThEx of this [[Assistant]]; or false otherwise. */
+		 * @return true if the current [[java.lang.Thread]] is the currently assigned to this [[Assistant]] (the thread used to execute the [[Runnable]] passed to [[executeSequentially]]); or false otherwise. */
 		inline def isWithinDoSiThEx: Boolean = this eq current
 
 		/**
@@ -85,7 +85,7 @@ trait Doer { thisDoer =>
 	val assistant: Assistant
 
 	/**
-	 * Queues the execution of the received [[Runnable]] in the task-queue of this $DoSiThEx. See [[Doer.Assistant.executeSequentially]]
+	 * Queues the execution of the specified procedure in the task-queue of this $DoSiThEx. See [[Doer.Assistant.executeSequentially]]
 	 * If the call is executed by the DoSiThEx the [[Runnable]]'s execution will not start until the DoSiThEx completes its current execution and gets free to start a new one.
 	 *
 	 * All the deferred actions preformed by the [[Task]] operations are executed by calling this method unless the particular operation documentation says otherwise. That includes not only the call-back functions like `onComplete` but also all the functions, procedures, predicates, and by-name parameters they receive as.
@@ -351,15 +351,15 @@ trait Doer { thisDoer =>
 
 	object Duty {
 
-		/** Creates a [[Duty]] that returns the [[Unit]] instance when executed. */
-		inline def unit: Duty[Unit] = Duty.ready(())
+		/** A [[Duty]] that yields [[Unit]]. */
+		val unit: Duty[Unit] = ready(())
 
 		/** Creates a [[Duty]] whose execution never ends.
 		 * $threadSafe
 		 *
 		 * @return a [[Duty]] whose execution never ends.
 		 * */
-		inline def never: Duty[Nothing] = NotEver
+		val never: Duty[Nothing] = NotEver
 
 		/** Creates a [[Duty]] whose result is calculated at the call site even before the duty is constructed.
 		 * $threadSafe
@@ -1319,15 +1319,11 @@ trait Doer { thisDoer =>
 
 	object Task {
 
-		/** Creates a [[Task]] that returns the [[Unit]] instance when executed. */
-		inline def unit: Task[Unit] = successful(())
+		/** A [[Task]] yields [[Unit]]. */
+		val unit: Task[Unit] = successful(())
 
-		/** Creates a [[Task]] whose execution never ends.
-		 * $threadSafe
-		 *
-		 * @return a [[Task]] whose execution never ends.
-		 * */
-		inline def never: Task[Nothing] = Never
+		/** A [[Task]] whose execution never ends. */
+		val never: Task[Nothing] = Never
 
 		/** Creates a [[Task]] whose result is calculated at the call site even before the task is constructed. The result of its execution is always the provided value.
 		 *

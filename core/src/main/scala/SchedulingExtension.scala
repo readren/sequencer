@@ -51,12 +51,14 @@ object SchedulingExtension {
 		def scheduleSequentially(schedule: Schedule, runnable: Runnable): Unit
 
 		/**
-		 * Removes the execution-program entity corresponding to the provided [[Schedule]] from the priority queue. A single execution may occur even after this method returns if called near its scheduled time.
+		 * The implementation should remove the [[Runnable]] corresponding to the provided [[Schedule]] from the schedule.
+		 * The implementation may, but preferably not, execute the [[Runnable]] a single time after this method returns if called near its scheduled time.
 		 * The implementation should not throw non-fatal exceptions. */
 		def cancel(schedule: Schedule): Unit
 
 		/**
-		 * Removes all the execution-program entities corresponding to this [[Assistant]] instance from the priority queue. A single execution of each may occur even after this method returns if called near their scheduled time.
+		 * The implementation should remove all the scheduled [[Runnable]]s corresponding to this [[Assistant]] instance from the schedule.
+		 * The implementation may, but preferable not, execute the [[Runnable]] a single time after this method returns if called near their scheduled time.
 		 * The implementation should not throw non-fatal exceptions. */
 		def cancelAll(): Unit
 
@@ -242,7 +244,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * Otherwise, the result is [[Maybe.empty]].
 		 *
 		 * @param timeout the maximum duration allowed for the `thisTask` to complete before returning [[Maybe.empty]].
-		 * @return a [[Duty]] that wraps the result of this duty with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
+		 * @return a [[Task]] that wraps the result of this task with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
 		 */
 		def timeBounded(timeout: FiniteDuration): Task[Maybe[A]] =
 			timeBounded(newDelaySchedule(timeout.toMillis))
