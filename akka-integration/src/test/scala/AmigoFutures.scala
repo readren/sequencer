@@ -1,4 +1,4 @@
-package readren.taskflow.akka
+package readren.sequencer.akka
 
 import akka.actor.{Actor, ActorRef, Timers}
 import akka.pattern.ask

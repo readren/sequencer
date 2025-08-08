@@ -1,5 +1,6 @@
-package readren.taskflow
+package readren.sequencer
 
+import readren.sequencer.Doer
 import SchedulingExtension.MilliDuration
 
 import scala.concurrent.duration.FiniteDuration

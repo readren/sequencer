@@ -1,8 +1,8 @@
-package readren.taskflow.akka
+package readren.sequencer.akka
 
 import akka.actor.typed.{ActorRef, Scheduler}
 import akka.util.Timeout
-import readren.taskflow.Doer
+import readren.sequencer.Doer
 import scala.util.{Failure, Success}
 
 object ActorExtension {

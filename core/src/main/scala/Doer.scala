@@ -1,4 +1,4 @@
-package readren.taskflow
+package readren.sequencer
 
 import Doer.ExceptionReport
 
@@ -158,7 +158,7 @@ trait Doer { thisDoer =>
 		protected def engage(onComplete: A => Unit): Unit
 
 		/** A bridge to access the [[engage]] method from macros in [[DoerMacros]] and sibling classes. */
-		private[taskflow] inline final def engagePortal(onComplete: A => Unit): Unit = engage(onComplete)
+		private[sequencer] inline final def engagePortal(onComplete: A => Unit): Unit = engage(onComplete)
 
 		/**
 		 * Triggers the execution of this [[Duty]].

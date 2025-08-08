@@ -1,4 +1,4 @@
-package readren.taskflow.akka
+package readren.sequencer.akka
 
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorSystem, Behavior}

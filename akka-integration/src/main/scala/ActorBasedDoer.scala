@@ -1,10 +1,10 @@
-package readren.taskflow.akka
+package readren.sequencer.akka
 
 import ActorExtension.Aide
 
 import akka.actor.typed.*
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
-import readren.taskflow.AbstractDoer
+import readren.sequencer.AbstractDoer
 
 import scala.reflect.Typeable
 
@@ -12,7 +12,7 @@ object ActorBasedDoer {
 
 	private[akka] val currentAssistant: ThreadLocal[Aide] = new ThreadLocal()
 
-	private[taskflow] case class Procedure(runnable: Runnable)
+	private[sequencer] case class Procedure(runnable: Runnable)
 
 	/** A [[Behavior]] factory that provides access to an [[ActorBasedDoer]] whose DoSiThEx (doer single thread executor) is the actor corresponding to the provided [[ActorContext]]. */
 	def setup[A: Typeable](ctxA: ActorContext[A])(frontier: ActorBasedDoer => Behavior[A]): Behavior[A] = {
@@ -24,7 +24,7 @@ object ActorBasedDoer {
 	}
 
 
-	private[taskflow] def buildAide[A >: Procedure](ctx: ActorContext[A]): Aide = new Aide {
+	private[sequencer] def buildAide[A >: Procedure](ctx: ActorContext[A]): Aide = new Aide {
 		override def executeSequentially(runnable: Runnable): Unit = ctx.self ! Procedure(runnable)
 
 		override def current: Aide = currentAssistant.get

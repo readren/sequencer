@@ -11,9 +11,11 @@
 /target
 **/project/target/
 /core/target
-/akka/target
-/akka/**/project/target/
-/akka/.bsp
+/core/**/project/target/
+/core/.bsp
+/akka-integration/target
+/akka-integration/**/project/target/
+/akka-integration/.bsp
 
 
 # VSC related

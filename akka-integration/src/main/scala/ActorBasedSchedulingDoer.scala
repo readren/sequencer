@@ -1,12 +1,12 @@
-package readren.taskflow.akka
+package readren.sequencer.akka
 
 import ActorBasedDoer.Procedure
 import ActorBasedSchedulingDoer.SchedulingAide
 
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{Behavior, Scheduler}
-import readren.taskflow.{AbstractDoer, SchedulingExtension}
-import readren.taskflow.SchedulingExtension.MilliDuration
+import readren.sequencer.{AbstractDoer, SchedulingExtension}
+import readren.sequencer.SchedulingExtension.MilliDuration
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.FiniteDuration

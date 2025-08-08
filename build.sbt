@@ -1,15 +1,15 @@
-ThisBuild / version := "0.2.12-SNAPSHOT"
+ThisBuild / version := "0.3.0-SNAPSHOT"
 
 ThisBuild / scalaVersion := "3.7.1"
 
 val AkkaVersion = "2.10.1"
 
 // Core library project without Akka dependencies
-lazy val library = (project in file("core"))
+lazy val core = (project in file("core"))
 	.settings(
-		name := "taskflow-core",
+		name := "sequencer-core",
 		organization := "readren",
-		idePackagePrefix := Some("readren.taskflow"),
+		idePackagePrefix := Some("readren.sequencer"),
 		libraryDependencies ++= Seq(
 			"org.scalatest" %% "scalatest" % "3.2.19" % Test,
 			"org.scalacheck" %% "scalacheck" % "1.18.1" % Test,
@@ -19,13 +19,13 @@ lazy val library = (project in file("core"))
 		)
 	)
 
-// Akka integration project that depends on `library` and includes Akka dependencies
-lazy val akkaIntegration = (project in file("akka"))
-	.dependsOn(library)
+// Akka integration project that depends on `kernel` and includes Akka dependencies
+lazy val akkaIntegration = (project in file("akka-integration"))
+	.dependsOn(core)
 	.settings(
-		name := "taskflow-akka",
+		name := "sequencer-akka-integration",
 		organization := "readren",
-		idePackagePrefix := Some("readren.taskflow.akka"),
+		idePackagePrefix := Some("readren.sequencer.akka"),
 		resolvers += "Akka library repository".at("https://repo.akka.io/maven"),
 		libraryDependencies ++= Seq(
 			"ch.qos.logback" % "logback-classic" % "1.5.17",
@@ -37,11 +37,11 @@ lazy val akkaIntegration = (project in file("akka"))
 
 // Root project to aggregate both subprojects
 lazy val root = (project in file("."))
-	.aggregate(library, akkaIntegration)
+	.aggregate(core, akkaIntegration)
 	.settings(
-		name := "taskflow",
+		name := "sequencer",
 		organization := "readren",
-		idePackagePrefix := Some("readren.taskflow")
+		idePackagePrefix := Some("readren.sequencer")
 	)
 
 ThisBuild / scalacOptions ++= Seq(

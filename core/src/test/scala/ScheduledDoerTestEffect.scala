@@ -1,4 +1,4 @@
-package readren.taskflow
+package readren.sequencer
 
 import Doer.ExceptionReport
 import DoerTestEffect.currentAssistant
@@ -7,7 +7,7 @@ import SchedulingExtension.*
 import munit.ScalaCheckEffectSuite
 import org.scalacheck.{Arbitrary, Gen}
 import org.scalacheck.effect.PropF
-import readren.taskflow
+import readren.sequencer
 
 import java.util.concurrent.{Executors, ScheduledFuture, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
@@ -237,7 +237,7 @@ class ScheduledDoerTestEffect extends ScalaCheckEffectSuite {
 			var counter: Int = 0
 			val duty = Duty.schedule[Int](schedule)(() => counter)
 				.andThen { supplierResult =>
-					println(s"supplierResult = $supplierResult/$repetitions")
+					// println(s"supplierResult = $supplierResult/$repetitions")
 					if supplierResult == repetitions then {
 						cancel(schedule)
 						covenant.fulfill(supplierResult)()
@@ -280,7 +280,7 @@ class ScheduledDoerTestEffect extends ScalaCheckEffectSuite {
 			dutyArbitrary[Int].arbitrary
 		) { (initialDelay: Int, interval: Int, duty: Duty[Int]) =>
 			val repetitions = 5 - interval
-			println(s"\nBegin: initialDelay = $initialDelay, interval = $interval, repetitions = $repetitions")
+			// println(s"\nBegin: initialDelay = $initialDelay, interval = $interval, repetitions = $repetitions")
 			val schedule = newFixedDelaySchedule(initialDelay, interval)
 			val commitment = Commitment[Unit]()
 			var counter: Int = 0
@@ -293,7 +293,7 @@ class ScheduledDoerTestEffect extends ScalaCheckEffectSuite {
 				val actualDelay = System.currentTimeMillis() - startMilli
 				val expectedDelay = interval * counter + initialDelay
 				if actualDelay < expectedDelay then commitment.break(new AssertionError(s"Execution was not delayed enough. Expected at least ${expectedDelay}ms, got ${actualDelay}ms"))()
-				println(s"period = $interval, counter = $counter/$repetitions, actualDelay = $actualDelay, expectedDelay = $expectedDelay, active = ${doer.assistant.isActive(schedule)}")
+				// println(s"period = $interval, counter = $counter/$repetitions, actualDelay = $actualDelay, expectedDelay = $expectedDelay, active = ${doer.assistant.isActive(schedule)}")
 				if counter == repetitions then {
 					commitment.fulfill(())()
 					cancel(schedule)
@@ -301,20 +301,6 @@ class ScheduledDoerTestEffect extends ScalaCheckEffectSuite {
 			}
 			check.triggerAndForget()
 			commitment.toFuture()
-		}
-	}
-
-	test("pepe") {
-		PropF.forAllF(dutyArbitrary[Int].arbitrary, Gen.choose(1, 10)) { (duty: Duty[Int], delay: Int) =>
-			//			duty.flatMap(i => Duty.delay(delay)(() => ())).toFutureHardy()
-
-			val x = for {
-				_ <- Task.mine { () => () }
-				_ = println("blabla")
-				_ <- Task.sleeps(delay)
-			} yield println("bleble")
-			val commitment = Commitment[Unit]()
-			commitment.completeWith(x)().toFuture()
 		}
 	}
 
@@ -360,7 +346,7 @@ class ScheduledDoerTestEffect extends ScalaCheckEffectSuite {
 		PropF.forAllNoShrinkF { (duty: Duty[Int], delay: Int) =>
 			def f(i:Int):String = i.toString.reverse
 			val testDelay = Math.abs(delay % 5) + 1 // 1-5ms
-			println(s"Begin: testDelay = $testDelay")
+			// println(s"Begin: testDelay = $testDelay")
 
 			// Test composition with map
 			def scheduledMapped: Duty[String] = duty.delayed(testDelay).map(f)
@@ -373,17 +359,14 @@ class ScheduledDoerTestEffect extends ScalaCheckEffectSuite {
 			val checks = // TODO solucionar esto que no funca
 				for {
 					x <- scheduledMapped
-					_ = println(s"----> -1 [$x]")
 					y <- mappedScheduled
-					_ = println(s"----> 0 $x == $y")
 					_ <- Duty.combine(scheduledMapped, mappedScheduled) { (a, b) =>
 						assert(a == b, "scheduled.map should equal map.scheduled")
 					}
-					_ = println(s"----> 1")
 					_ <- Duty.combine(scheduledFlatMapped, flatMappedScheduled) { (scheduledFlat, flatMapped) =>
 						assert(scheduledFlat == flatMapped, "scheduled.flatMap should equal flatMap.scheduled")
 					}
-				} yield println(s"----> 2")
+				} yield ()
 			checks.toFutureHardy()
 		}
 	}
