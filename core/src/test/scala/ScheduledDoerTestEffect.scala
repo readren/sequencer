@@ -2,32 +2,35 @@ package readren.taskflow
 
 import Doer.ExceptionReport
 import DoerTestEffect.currentAssistant
+import SchedulingExtension.*
 
 import munit.ScalaCheckEffectSuite
-import org.scalacheck.Arbitrary
+import org.scalacheck.{Arbitrary, Gen}
 import org.scalacheck.effect.PropF
+import readren.taskflow
 
-import java.util.concurrent.Executors
+import java.util.concurrent.{Executors, ScheduledFuture, TimeUnit}
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
-object DoerTestEffect {
+object ScheduledDoerTestEffect {
 	val currentAssistant: ThreadLocal[Doer.Assistant] = new ThreadLocal()
 }
 
-class DoerTestEffect extends ScalaCheckEffectSuite {
+class ScheduledDoerTestEffect extends ScalaCheckEffectSuite {
 
 	/** Remembers the exceptions that were unhandled in the DoSiThEx's thread.
 	 * CAUTION: this variable should be accessed within the DoSiThEx thread only. */
 	private val unhandledExceptions = mutable.Set.empty[String]
 	private val reportedExceptions = mutable.Set.empty[String]
 
-	private val theAssistant = new Doer.Assistant { thisAssistant => 
-		private val doSiThEx = Executors.newSingleThreadExecutor()
+	private object theAssistant extends Doer.Assistant, SchedulingExtension.Assistant { thisAssistant =>
+		private val doSiThEx = Executors.newSingleThreadScheduledExecutor()
 
 		private val sequencer: AtomicInteger = new AtomicInteger(0)
 
@@ -51,6 +54,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 					// println(s"queuedForSequentialExecution: finally; id=$id; thread=${Thread.currentThread().getName}")
 				}
 			})
+
 		}
 
 		override def current: Doer.Assistant = currentAssistant.get
@@ -64,9 +68,82 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 			}
 		}
 
+		//// SCHEDULING EXTENSION
+
+		sealed abstract class TSchedule {
+			var scheduledFuture: ScheduledFuture[?] | Null = null
+			@volatile var isActive: Boolean = false
+			@volatile var canceled: Boolean = false
+		}
+
+		case class TDelaySchedule(delay: MilliDuration) extends TSchedule
+
+		case class TFixedRateSchedule(initialDelay: MilliDuration, interval: MilliDuration) extends TSchedule
+
+		case class TFixedDelaySchedule(initialDelay: MilliDuration, delay: MilliDuration) extends TSchedule
+
+		/** needed to support [[cancelAll]]. */
+		private val activeSchedules: mutable.Set[TSchedule] = mutable.Set.empty
+
+		override type Schedule = TSchedule
+
+		override def newDelaySchedule(delay: MilliDuration): TDelaySchedule = TDelaySchedule(delay)
+
+		override def newFixedRateSchedule(initialDelay: MilliDuration, interval: MilliDuration): TFixedRateSchedule = TFixedRateSchedule(initialDelay, interval)
+
+		override def newFixedDelaySchedule(initialDelay: MilliDuration, delay: MilliDuration): Schedule = TFixedDelaySchedule(initialDelay, delay)
+
+		override def scheduleSequentially(schedule: Schedule, runnable: Runnable): Unit = {
+			assert(!schedule.isActive)
+			if schedule.canceled then return
+			activeSchedules.addOne(schedule)
+			schedule.scheduledFuture = schedule match {
+				case TDelaySchedule(delay) =>
+					val wrapper: Runnable = () =>
+						if schedule.isActive then {
+							currentAssistant.set(this)
+							runnable.run()
+							currentAssistant.remove()
+							activeSchedules.remove(schedule)
+							schedule.isActive = false
+						}
+					doSiThEx.schedule(wrapper, delay, TimeUnit.MILLISECONDS)
+
+				case TFixedRateSchedule(initialDelay, interval) =>
+					val wrapper: Runnable = () => if schedule.isActive then runnable.run()
+					doSiThEx.scheduleAtFixedRate(wrapper, initialDelay, interval, TimeUnit.MILLISECONDS)
+
+				case TFixedDelaySchedule(initialDelay, delay) =>
+					val wrapper: Runnable = () => if schedule.isActive then runnable.run()
+					doSiThEx.scheduleWithFixedDelay(wrapper, initialDelay, delay, TimeUnit.MILLISECONDS)
+			}
+			schedule.isActive = true
+		}
+
+		override def cancel(schedule: Schedule): Unit = {
+			schedule.canceled = true
+			if schedule.isActive then {
+				schedule.scheduledFuture.cancel(false)
+				activeSchedules.remove(schedule)
+				schedule.isActive = false
+			}
+		}
+
+		override def cancelAll(): Unit = {
+			for schedule <- activeSchedules do {
+				schedule.canceled = true
+				if schedule.isActive then {
+					schedule.scheduledFuture.cancel(false)
+					schedule.isActive = false
+				}
+			}
+			activeSchedules.clear()
+		}
+
+		override def isActive(schedule: Schedule): Boolean = schedule.isActive
 	}
 
-	private val doer: Doer = new Doer {
+	private object doer extends Doer, SchedulingExtension {
 		override type Assistant = theAssistant.type
 		override val assistant: Assistant = theAssistant
 	}
@@ -79,18 +156,17 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 	////////// DUTY //////////
 
 	// Custom equality for Duty based on the result
-	private def checkEquality[A](duty1: Duty[A], duty2: Duty[A]): Future[Unit] = {
+	private def checkEquality[A](duty1: Duty[A], duty2: Duty[A], clue: => Any = "duties yield different results"): Future[Unit] = {
 		// println(s"Begin: duty1=$duty1, duty2=$duty2")
-		val futureEquality = for {
+		for {
 			a1 <- duty1.toFutureHardy()
 			a2 <- duty2.toFutureHardy()
 		} yield {
 			// println(s"$try1 ==== $try2")
-			a1.equals(a2)
+			assertEquals(a1, a2, clue)
 		}
-		futureEquality.map(assert(_))
 	}
-	
+
 	// Monadic left identity law: Duty.ready(x).flatMap(f) == f(x)
 	test("Duty: left identity") {
 		PropF.forAllF { (x: Int, f: Int => Duty[Int]) =>
@@ -140,8 +216,179 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 			}
 		}
 	}
-	
-	
+
+	test("Duty: Duty.schedule(newDelaySchedule(delay))(supplier) executes the supplier after the delay") {
+		PropF.forAllF(Gen.choose(1, 5)) { (delay: Int) =>
+			val schedule = doer.newDelaySchedule(delay)
+			val startMilli = System.currentTimeMillis()
+			val duty = Duty.schedule(schedule)(() => delay * 2)
+				.map(x => assert(x == delay * 2 && System.currentTimeMillis() > startMilli + delay))
+			duty.toFutureHardy()
+		}
+	}
+
+	test("Duty: `Duty.schedule(newFixedRateSchedule)(supplier)` should execute both, the `supplier` and down-chained operations, repeatedly according to the specified specified period until cancellation") {
+		PropF.forAllF(Gen.choose(1, 10), Gen.choose(1, 10)) { (initialDelay: Int, interval: Int) =>
+			val repetitions = 10 - interval
+			// println(s"\nBegin: initialDelay = $initialDelay, interval = $interval, repetitions = $repetitions")
+			val schedule = newFixedRateSchedule(initialDelay, interval)
+			val covenant = Covenant[Int]()
+			val startMilli = System.currentTimeMillis()
+			var counter: Int = 0
+			val duty = Duty.schedule[Int](schedule)(() => counter)
+				.andThen { supplierResult =>
+					println(s"supplierResult = $supplierResult/$repetitions")
+					if supplierResult == repetitions then {
+						cancel(schedule)
+						covenant.fulfill(supplierResult)()
+					} else counter += 1
+				}
+			duty.triggerAndForget()
+			covenant
+				.map { sr =>
+					val actualDelay = System.currentTimeMillis() - startMilli
+					val expectedDelay = interval * repetitions + initialDelay
+					// println(s"counter = $counter/$repetitions, actualDelay = $actualDelay, expectedDelay = $expectedDelay, active = ${doer.assistant.isActive(schedule)}")
+					assertEquals(sr, repetitions)
+					assert(actualDelay >= expectedDelay)
+					assert(!assistant.isActive(schedule))
+				}
+				.toFutureHardy()
+		}
+	}
+
+	test("Duty: `duty.scheduled(newDelaySchedule(delay))` should preserve the original duty's result and postpone its execution the specified `delay`") {
+		PropF.forAllF(dutyArbitrary[Int].arbitrary, Gen.choose(1, 10)) { (duty: Duty[Int], testDelay: Int) =>
+			val schedule = doer.newDelaySchedule(testDelay)
+			(for {
+				directResult <- duty
+				startTime = System.currentTimeMillis()
+				delayedResult <- duty.scheduled(schedule)
+			} yield {
+				val actualDelay = System.currentTimeMillis() - startTime
+				assertEquals(directResult, delayedResult)
+				assert(actualDelay >= testDelay, s"Execution was not delayed enough. Expected at least ${testDelay}ms, got ${actualDelay}ms")
+			}).toFutureHardy()
+		}
+	}
+
+
+	test("Duty: `duty.scheduled(newFixedDelaySchedule)` should execute the `duty` (up-chained operations) repeatedly according to the specified period until cancellation") {
+		PropF.forAllF(
+			Gen.choose(1, 10),
+			Gen.choose(1, 5),
+			dutyArbitrary[Int].arbitrary
+		) { (initialDelay: Int, interval: Int, duty: Duty[Int]) =>
+			val repetitions = 5 - interval
+			println(s"\nBegin: initialDelay = $initialDelay, interval = $interval, repetitions = $repetitions")
+			val schedule = newFixedDelaySchedule(initialDelay, interval)
+			val commitment = Commitment[Unit]()
+			var counter: Int = 0
+			val check = for {
+				directResult <- duty
+				startMilli = System.currentTimeMillis()
+				scheduledResult <- duty.scheduled(schedule)
+			} yield {
+				if scheduledResult != directResult then commitment.break(new AssertionError(s"the scheduled result differs from the original"))()
+				val actualDelay = System.currentTimeMillis() - startMilli
+				val expectedDelay = interval * counter + initialDelay
+				if actualDelay < expectedDelay then commitment.break(new AssertionError(s"Execution was not delayed enough. Expected at least ${expectedDelay}ms, got ${actualDelay}ms"))()
+				println(s"period = $interval, counter = $counter/$repetitions, actualDelay = $actualDelay, expectedDelay = $expectedDelay, active = ${doer.assistant.isActive(schedule)}")
+				if counter == repetitions then {
+					commitment.fulfill(())()
+					cancel(schedule)
+				} else counter += 1
+			}
+			check.triggerAndForget()
+			commitment.toFuture()
+		}
+	}
+
+	test("pepe") {
+		PropF.forAllF(dutyArbitrary[Int].arbitrary, Gen.choose(1, 10)) { (duty: Duty[Int], delay: Int) =>
+			//			duty.flatMap(i => Duty.delay(delay)(() => ())).toFutureHardy()
+
+			val x = for {
+				_ <- Task.mine { () => () }
+				_ = println("blabla")
+				_ <- Task.sleeps(delay)
+			} yield println("bleble")
+			val commitment = Commitment[Unit]()
+			commitment.completeWith(x)().toFuture()
+		}
+	}
+
+	test("Duty: `duty.scheduled(schedule)` should be cancellable when the schedule is active.") {
+		PropF.forAllF(dutyArbitrary[Int].arbitrary, Gen.choose(1, 5)) { (duty: Duty[Int], delay: Int) =>
+			val schedule = doer.newDelaySchedule(delay)
+			val scheduledDuty = duty.scheduled(schedule)
+			val commitment = Commitment[Unit]()
+			scheduledDuty.trigger() { _ =>
+				commitment.break(new AssertionError(s"The duty completed despite it was cancelled: isActive=${assistant.isActive(schedule)}"))()
+			}
+			val cancelsAndWaits = for {
+				_ <- Duty.mine[Unit] { () =>
+					assert(assistant.isActive(schedule))
+					cancel(schedule)
+					assert(!assistant.isActive(schedule))
+				}
+				_ <- Duty.delay(delay)(() => ())
+
+			} yield ()
+			commitment.completeWith(cancelsAndWaits.toTask)(x => println("was already completed with x"))
+			commitment.toFuture()
+		}
+	}
+
+	test("Duty: `duty.scheduled(schedule)` should be cancellable before the schedule is active.") {
+		PropF.forAllF(dutyArbitrary[Int].arbitrary, Gen.choose(1, 5)) { (duty: Duty[Int], delay: Int) =>
+			val schedule = doer.newDelaySchedule(delay)
+			val scheduledDuty = duty.scheduled(schedule)
+			val commitment = Commitment[Unit]()
+			cancel(schedule)
+			scheduledDuty.trigger() { _ =>
+				commitment.break(new AssertionError(s"The duty completed despite it was cancelled: isActive=${assistant.isActive(schedule)}"))()
+			}
+			assert(!assistant.isActive(schedule))
+			commitment.completeWith(Task.sleeps(delay + 1))()
+			commitment.toFuture()
+		}
+	}
+
+
+	test("Duty.scheduled: should compose correctly with other Duty operations") {
+		PropF.forAllNoShrinkF { (duty: Duty[Int], delay: Int) =>
+			def f(i:Int):String = i.toString.reverse
+			val testDelay = Math.abs(delay % 5) + 1 // 1-5ms
+			println(s"Begin: testDelay = $testDelay")
+
+			// Test composition with map
+			def scheduledMapped: Duty[String] = duty.delayed(testDelay).map(f)
+			def mappedScheduled: Duty[String] = duty.map(f).delayed(testDelay)
+
+			// Test composition with flatMap
+			def scheduledFlatMapped: Duty[String] = duty.scheduled(doer.newDelaySchedule(testDelay)).flatMap(x => Duty.ready(f(x)))
+			def flatMappedScheduled: Duty[String] = duty.flatMap(x => Duty.ready(f(x))).scheduled(doer.newDelaySchedule(testDelay))
+
+			val checks = // TODO solucionar esto que no funca
+				for {
+					x <- scheduledMapped
+					_ = println(s"----> -1 [$x]")
+					y <- mappedScheduled
+					_ = println(s"----> 0 $x == $y")
+					_ <- Duty.combine(scheduledMapped, mappedScheduled) { (a, b) =>
+						assert(a == b, "scheduled.map should equal map.scheduled")
+					}
+					_ = println(s"----> 1")
+					_ <- Duty.combine(scheduledFlatMapped, flatMappedScheduled) { (scheduledFlat, flatMapped) =>
+						assert(scheduledFlat == flatMapped, "scheduled.flatMap should equal flatMap.scheduled")
+					}
+				} yield println(s"----> 2")
+			checks.toFutureHardy()
+		}
+	}
+
+
 	////////// TASK /////////////
 
 	// Custom equality for Task based on the result of attempt
@@ -156,11 +403,11 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 		futureEquality.map(assert(_))
 	}
 
-//	private def evalNow[A](task: Task[A]): Try[A] = {
-//		Await.result(task.toFutureHardy(), new FiniteDuration(1, TimeUnit.MINUTES))
-//	}
-	
-	
+	//	private def evalNow[A](task: Task[A]): Try[A] = {
+	//		Await.result(task.toFutureHardy(), new FiniteDuration(1, TimeUnit.MINUTES))
+	//	}
+
+
 	// Monadic left identity law: Task.successful(x).flatMap(f) == f(x)
 	test("Task: left identity") {
 		PropF.forAllF { (x: Int, f: Int => Task[Int]) =>
@@ -209,7 +456,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 		}
 	}
 
-	test("Task: any pair of tasks can be combined") {
+	test("Task: any can be combined") {
 		PropF.forAllF { (taskA: Task[Int], taskB: Task[Int], f: (Try[Int], Try[Int]) => Try[Int]) =>
 			val combinedTask = Task.combine(taskA, taskB)(f)
 
@@ -285,6 +532,7 @@ class DoerTestEffect extends ScalaCheckEffectSuite {
 			}
 
 			def f0[A](): A = throw exception
+
 			def f1[A, B](a: A): B = throw exception
 
 			def f2[A, B, C](a: A, b: B): C = throw exception

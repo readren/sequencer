@@ -2,7 +2,6 @@ package readren.taskflow
 
 import SchedulingExtension.MilliDuration
 
-import java.util.function.Supplier
 import scala.concurrent.duration.FiniteDuration
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
@@ -20,10 +19,10 @@ object SchedulingExtension {
 	 * This would necessitate a tuple, which not only requires additional memory allocation but also complicates the chaining of operations.
 	 * */
 	trait Assistant extends Doer.Assistant {
-		/** Represents a schedule and also serves as an identifier for, or as, the execution-program entity created by the [[scheduleSequentially]] method.
-		 * Determines a schedule and also identifies, or is, the execution-program entity created based on it by the [[scheduleSequentially]] method.
-		 * Therefore, it is illegal to use the same instance in more than one call to [[scheduleSequentially]].
-		 * Instances of this type may be the execution-program entity itself instead of just an identifier of it, in which case it necessarily would be mutated by the [[scheduleSequentially]] method and might expose information about the state of the execution-program. */
+		/** Represents an execution schedule.
+		 * It is tied to the [[Runnable]] passed along it to the [[scheduleSequentially]] method. This means that it is mutable and, therefore, non referentially transparent and illegal to use the same instance in more than one call to [[scheduleSequentially]].
+		 * Given all the operations added to [[Duty]] and [[Task]] by this extension ([[ScheduingExtesion]]) rely explicitly or implicitly on a [[Schedule]] instance, they all are also not referentially transparent.
+		 * TODO: avoid the limitation of using the same instance in more than one call to [[scheduleSequentially]], by enforcing [[Schedule]] to be referentially transparent. This change requires that instances of [[Schedule]] instances to be associated to all the runnables that accompany it in a calls to [[scheduleSequentially]], and that the `cancel` method to apply to all of them. */
 		type Schedule
 
 		/** Creates a [[Schedule]] for a single time execution after a delay.
@@ -52,13 +51,13 @@ object SchedulingExtension {
 
 		/**
 		 * The implementation should remove the [[Runnable]] corresponding to the provided [[Schedule]] from the schedule.
-		 * The implementation may, but preferably not, execute the [[Runnable]] a single time after this method returns if called near its scheduled time.
+		 * The implementation should not execute the [[Runnable]] after this method returns, even if called near its scheduled time.
 		 * The implementation should not throw non-fatal exceptions. */
 		def cancel(schedule: Schedule): Unit
 
 		/**
 		 * The implementation should remove all the scheduled [[Runnable]]s corresponding to this [[Assistant]] instance from the schedule.
-		 * The implementation may, but preferable not, execute the [[Runnable]] a single time after this method returns if called near their scheduled time.
+		 * The implementation should not execute the [[Runnable]] after this method returns, even if called near their scheduled time.
 		 * The implementation should not throw non-fatal exceptions. */
 		def cancelAll(): Unit
 
@@ -66,7 +65,10 @@ object SchedulingExtension {
 	}
 }
 
-/** Extends the [[Doer]] trait and its [[Duty]] and [[Task]] inner traits with scheduling operations. */
+/** Extends the [[Doer]] trait and its [[Duty]] and [[Task]] inner traits with scheduling operations.
+ * @define notReusableDuty CAUTION: the [[Duty]] instance returned by this method should not be reused. It is mutable because it depends on an instance of [[SchedulingExtension.Assistant.Schedule]] which mutate when [[scheduleSequentially]] is executed. // TODO avoid this limitation enforcing the implementation of Schedule be immutable or apparently immutable.
+ * @define notReusableTask CAUTION: the [[Task]] instance returned by this method should not be reused. It is mutable because it depends on an instance of [[SchedulingExtension.Assistant.Schedule]] which mutate when [[scheduleSequentially]] is executed. // TODO avoid this limitation enforcing the implementation of Schedule be immutable or apparently immutable.
+ * */
 trait SchedulingExtension { thisSchedulingExtension: Doer =>
 
 	override type Assistant <: SchedulingExtension.Assistant
@@ -81,18 +83,27 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 	extension [A](thisDuty: Duty[A]) {
 
 		/** Returns a [[Duty]] that behaves the same as `thisDuty`, but its execution starts only after the delay specified by the provided schedule, measured from the moment it is triggered.
-		 * If the provided [[Schedule]] is a fixed rate, triggering the returned [[Duty]] causes `thisDuty` to execute periodically until the `schedule` is canceled. */
+		 * If the provided [[Schedule]] is a fixed rate/delay, triggering the returned [[Duty]] causes `thisDuty` to execute repeatedly until the `schedule` is canceled.
+		 * $notReusableDuty */
 		inline def scheduled(schedule: Schedule): Duty[A] =
 			new Scheduled(thisDuty, schedule)
 
-		/** Returns a [[Duty]] that behaves the same as `thisDuty`, but its execution starts only after the provided `delay`, measured from the moment it is triggered. */
-		def delayed(delay: FiniteDuration): Duty[A] =
-			scheduled(newDelaySchedule(delay.toMillis))
+
+		/** Returns a [[Duty]] that behaves the same as `thisDuty`, but its execution starts only after the provided `delay`, measured from the moment it is triggered.
+		 * $notReusableDuty */
+		inline def delayed(delay: MilliDuration): Duty[A] =
+			scheduled(newDelaySchedule(delay))
+
+		/** Returns a [[Duty]] that behaves the same as `thisDuty`, but its execution starts only after the provided `delay`, measured from the moment it is triggered.
+		 * $notReusableDuty */
+		inline def delayed(delay: FiniteDuration): Duty[A] =
+			delayed(delay.toMillis)
 
 		/** Like [[Duty.map]] but the function application is scheduled.
 		 * Note that what is scheduled is the start of the function application, not the execution of `thisDuty`. The schedule's delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
 		 * If the provided `schedule` is a fixed rate then triggering the returned duty causes the function application be executed periodically until the `schedule` is canceled.
-		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).map(f).scheduled(schedule)) }}} but more efficient. */
+		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).map(f).scheduled(schedule)) }}} but more efficient.
+		 * $notReusableDuty*/
 		def mapScheduled[B](schedule: Schedule)(f: A => B): Duty[B] = new Duty[B] {
 			override def engage(onComplete: B => Unit): Unit = {
 				thisDuty.engagePortal { a => scheduleSequentially(schedule) { () => onComplete(f(a)) } }
@@ -101,15 +112,24 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 
 		/** Like [[Duty.map]] but the function application is delayed.
 		 * Note that what is delayed is the start of function application, not the start of the execution of `thisDuty`. The delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
-		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).map(f).delayed(delay)) }}} but more efficient. */
-		def mapDelayed[B](delay: FiniteDuration)(f: A => B): Duty[B] =
-			mapScheduled(newDelaySchedule(delay.toMillis))(f)
+		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).map(f).delayed(delay)) }}} but more efficient.
+		 * $notReusableDuty*/
+		inline def mapDelayed[B](delay: MilliDuration)(f: A => B): Duty[B] =
+			mapScheduled(newDelaySchedule(delay))(f)
+
+		/** Like [[Duty.map]] but the function application is delayed.
+		 * Note that what is delayed is the start of function application, not the start of the execution of `thisDuty`. The delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
+		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).map(f).delayed(delay)) }}} but more efficient.
+		 * $notReusableDuty */
+		inline def mapDelayed[B](delay: FiniteDuration)(f: A => B): Duty[B] =
+			mapDelayed(delay.toMillis)(f)
 
 
 		/** Like [[Duty.flatMap]] but the function application is scheduled.
 		 * Note that what is scheduled is the function application, not the execution of `thisDuty`. The schedule's delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
 		 * If the provided `schedule` is a fixed rate then triggering the returned duty causes the function application be executed periodically until the `schedule` is canceled.
-		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).flatMap(f).scheduled(schedule)) }}} but more efficient. */
+		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).flatMap(f).scheduled(schedule)) }}} but more efficient.
+		 * $notReusableDuty*/
 		def flatMapScheduled[B](schedule: Schedule)(f: A => Duty[B]): Duty[B] = new Duty[B] {
 			override def engage(onComplete: B => Unit): Unit = {
 				thisDuty.engagePortal { a => scheduleSequentially(schedule) { () => f(a).engagePortal(onComplete) } }
@@ -118,13 +138,15 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 
 		/** Like [[Duty.flatMap]] but the function application is delayed.
 		 * Note that what is delayed is the function application, not the execution of `thisDuty`. The delay occurs after the execution of `thisDuty` and before the application of `f` to its result.
-		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).flatMap(f).delayed(delay)) }}} but more efficient. */
+		 * Is equivalent to {{{ thisDuty.flatMap(a => Duty.ready(a).flatMap(f).delayed(delay)) }}} but more efficient.
+		 * $notReusableDuty */
 		def flatMapDelayed[B](delay: FiniteDuration)(f: A => Duty[B]): Duty[B] =
 			flatMapScheduled(newDelaySchedule(delay.toMillis))(f)
 
 		/**
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but wraps its result in [[Maybe.some]] if the duty's execution takes less time than the delay of the provided [[Schedule]].
 		 * Otherwise, the result is [[Maybe.empty]].
+		 * $notReusableDuty
 		 *
 		 * Canceling the `schedule` within the [[Doer]] `DoSiThEx` before the delay elapses effectively removes the time constraint, treating the timeout's delay as infinite.
 		 * The provided [[Schedule]] may be a fixed rate one, in which case triggering the returned duty would cause an inert operation be executed periodically until the schedule is cancelled.
@@ -139,6 +161,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		/**
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but wraps its result in [[Maybe.some]] if the duty's execution takes less time than the provided `timeout`.
 		 * Otherwise, the result is [[Maybe.empty]].
+		 * $notReusableDuty
 		 *
 		 * @param timeout the maximum duration allowed for the duty to complete before returning [[Maybe.empty]].
 		 * @return a [[Duty]] that wraps the result of this duty with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
@@ -150,6 +173,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * Returns a [[Duty]] that behaves the same as `thisDuty` but retries its execution if it does not complete within the delay of the specified [[Schedule]].
 		 * The duty will be retried until it completes within the `timeout` or the maximum number of retries (`maxRetries`) is reached, whichever occurs first.
 		 * If this duty has side effects, they will be performed once for the initial execution and once for each retry, resulting in a total of one plus the number of retries.
+		 * $notReusableDuty
 		 *
 		 * @param timeout    the maximum duration to allow for each execution of the duty before it is retried.
 		 * @param maxRetries the maximum number of retries allowed.
@@ -194,33 +218,82 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 	}
 
 	extension (companion: Duty.type) {
-		inline def schedule[A](schedule: Schedule)(supplier: Supplier[A]): Duty[A] =
+		/** Creates a [[Duty]] that does nothing for the specified `duration`.
+		 * Is equivalent to both {{{delay(duration)(()=>()) }}} and {{{Duty.unit.delayed(duration)}}}
+		 * $notReusableDuty */
+		inline def waits(duration: MilliDuration): Duty[Unit] =
+			delay(duration)(()=>())
+		
+		/** @return a [[Duty]] that executes a supplier and yields its result according to a [[Schedule]] since it is triggered.
+		 * If the schedule is a fixed rate/delay then the supplier and down-chained operations are executed repeatedly until the schedule is canceled.
+		 * $notReusableDuty */
+		inline def schedule[A](schedule: Schedule)(supplier: () => A): Duty[A] =
 			new Book(schedule, supplier)
 
-		def delay[A](duration: FiniteDuration)(supplier: Supplier[A]): Duty[A] =
-			new Book(newDelaySchedule(duration.toMillis), supplier)
+		/** $notReusableDuty
+		 *  @return a [[Duty]] that executes a supplier and yields its result after a delay since it is triggered. */
+		inline def delay[A](duration: MilliDuration)(supplier: () => A): Duty[A] =
+			new Book(newDelaySchedule(duration), supplier)
+
+		/** $notReusableDuty
+		 *  @return a [[Duty]] that executes a supplier and yields its result after a delay since it is triggered. */
+		inline def delay[A](duration: FiniteDuration)(supplier: () => A): Duty[A] =
+			delay(duration.toMillis)(supplier)
 	}
 
-	final class Book[A](schedule: Schedule, supplier: Supplier[A]) extends Duty[A] {
+	final class Book[A](schedule: Schedule, supplier: () => A) extends Duty[A] {
 		override def engage(onComplete: A => Unit): Unit =
-			scheduleSequentially(schedule)(() => onComplete(supplier.get))
+			scheduleSequentially(schedule)(() => onComplete(supplier()))
 	}
 
 	//// Task extension ////
 
 	extension [A](thisTask: Task[A]) {
 
-		/** Like [[Duty.scheduled]] but for [[Task]]s. */
+		/** Like [[Duty.scheduled]] but for [[Task]]s.
+		 * $notReusableTask */
 		def appointed(schedule: Schedule): Task[A] = new Task[A] {
 			override def engage(onComplete: Try[A] => Unit): Unit = {
 				scheduleSequentially(schedule)(() => thisTask.engagePortal(onComplete))
 			}
 		}
 
+		/** Returns a [[Task]] that behaves the same as `thisTask`, but its execution starts only after the provided `delay`, measured from the moment it is triggered.
+		 * $notReusableTask */
+		inline def postponed(delay: MilliDuration): Task[A] =
+			appointed(newDelaySchedule(delay))
 
-		/** Like [[Duty.delayed]] but for [[Task]]s. */
-		def postponed(delay: FiniteDuration): Task[A] =
-			appointed(newDelaySchedule(delay.toMillis))
+		/** Returns a [[Task]] that behaves the same as `thisTask`, but its execution starts only after the provided `delay`, measured from the moment it is triggered. */
+		inline def postponed(delay: FiniteDuration): Task[A] =
+			postponed(delay.toMillis)
+
+		/** Like [[Task.map]] but the function application is scheduled.
+		 * Note that what is scheduled is the start of the function application, not the execution of `thisTask`. The schedule's delay occurs after the execution of `thisTask` and only if it is successful.
+		 * If the provided `schedule` is a fixed rate then triggering the returned task causes the function application be executed periodically until the `schedule` is canceled.
+		 * Is equivalent to {{{ thisTask.map(a => Task.successful(a).map(f).appointed(schedule)) }}} but more efficient.
+		 * $notReusableTask */
+		def mapAppointed[B](schedule: Schedule)(f: A => B): Task[B] = new Task[B] {
+			override def engage(onComplete: Try[B] => Unit): Unit = {
+				thisTask.engagePortal {
+					case Success(a) => scheduleSequentially(schedule) { () => onComplete(Try(f(a))) }
+					case fe@Failure(e) => onComplete(fe.asInstanceOf[Failure[B]])	
+				}
+			}
+		}
+
+		/** Like [[Task.map]] but the function application is delayed.
+		 * Note that what is delayed is the start of function application, not the start of the execution of `thisTask`. The delay occurs after the execution of `thisTask` and before the application of `f` to its result.
+		 * Is equivalent to {{{ thisTask.map(a => Task.successful(a).map(f).appointed(schedule))  }}} but more efficient.
+		 * $notReusableTask */
+		inline def mapPostponed[B](delay: MilliDuration)(f: A => B): Task[B] =
+			mapAppointed(newDelaySchedule(delay))(f)
+
+		/** Like [[Task.map]] but the function application is delayed.
+		 * Note that what is delayed is the start of function application, not the start of the execution of `thisTask`. The delay occurs after the execution of `thisTask` and before the application of `f` to its result.
+		 * Is equivalent to {{{ thisTask.map(a => Task.successful(a).map(f).appointed(schedule))  }}} but more efficient.
+		 * $notReusableTask */
+		inline def mapPostponed[B](delay: FiniteDuration)(f: A => B): Task[B] =
+			mapPostponed(delay.toMillis)(f)
 
 		/**
 		 * Returns a [[Task]] that behaves the same as `thisTask` but wraps its result in [[Maybe.some]] if the task's execution takes less time than the delay of the provided [[Schedule]].
@@ -228,6 +301,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 *
 		 * Canceling the `schedule` within the [[Doer]] `DoSiThEx` before the delay elapses effectively removes the time constraint, treating the timeout's delay as infinite.
 		 * The provided [[Schedule]] may be a fixed rate one, in which case triggering the returned task would cause an inert operation be executed periodically until the schedule is cancelled.
+		 * $notReusableTask
 		 *
 		 * @param schedule a [[Schedule]] whose delay is the maximum duration allowed for the `thisTask` to complete before returning [[Maybe.empty]].
 		 * @return a [[Duty]] that wraps the result of this duty with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
@@ -242,6 +316,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		/**
 		 * Returns a [[Task]] that behaves the same as `thisTask` but wraps its result in [[Maybe.some]] if the task's execution takes less time than `timeout`.
 		 * Otherwise, the result is [[Maybe.empty]].
+		 * $notReusableTask
 		 *
 		 * @param timeout the maximum duration allowed for the `thisTask` to complete before returning [[Maybe.empty]].
 		 * @return a [[Task]] that wraps the result of this task with [[Maybe.some]] if the task completes within the timeout, or completes with [[Maybe.empty]] when the timeout elapses.
@@ -253,6 +328,7 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 		 * Returns a [[Task]] that behaves the same as `thisTask` but retries its execution if it does not complete within the specified `timeout`.
 		 * The task will be retried until it completes within the `timeout` or the maximum number of retries (`maxRetries`) is reached, whichever occurs first.
 		 * If this task has side effects, they will be performed once for the initial execution and once for each retry, resulting in a total of one plus the number of retries.
+		 * $notReusableTask
 		 *
 		 * @param timeout the maximum duration to allow for each execution of the task before it is retried.
 		 * @param maxRetries the maximum number of retries allowed.
@@ -276,15 +352,22 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 	/** Truco para agregar operaciones al objeto [[AmigoFutures.Task]]. Para que funcione se requiere que esta clase esté importada. */
 	extension (companion: Task.type) {
 
-		/** Creates a [[Task]] that does nothing for the specified `duration`. */
-		def sleeps(duration: FiniteDuration): Task[Unit] = {
+		/** Creates a [[Task]] that does nothing for the specified `duration`.
+		 * $notReusableTask*/
+		inline def sleeps(duration: MilliDuration): Task[Unit] = {
+			Task.unit.postponed(duration)
+		}
+		
+		/** Creates a [[Task]] that does nothing for the specified `duration`.
+		 * $notReusableTask */
+		inline def sleeps(duration: FiniteDuration): Task[Unit] = {
 			Task.unit.postponed(duration)
 		}
 
-		def appoint[A](schedule: Schedule)(supplier: Supplier[A]): Task[A] = new Task[A] {
+		def appoint[A](schedule: Schedule)(supplier: () => A): Task[A] = new Task[A] {
 			override def engage(onComplete: Try[A] => Unit): Unit = {
 				scheduleSequentially(schedule) { () =>
-					try onComplete(Success(supplier.get))
+					try onComplete(Success(supplier()))
 					catch {
 						case NonFatal(e) => onComplete(Failure(e))
 					}
@@ -292,11 +375,12 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 			}
 		}
 
-		/** Crea una tarea, llamémosla "bucle", que al ejecutarla ejecuta la `tarea` supervisada recibida y, si consume mas tiempo que el margen recibido, la vuelve a ejecutar. Este ciclo se repite hasta que el tiempo que consume la ejecución de la tarea supervisada no supere el margen, o se acaben los reintentos.
-		 * La ejecución de la tarea bucle completará cuando:
-		 * - el tiempo que demora la ejecución de la tarea supervisada en completar esta dentro del margen, en cuyo caso el resultado de la tarea bucle sería `Some(resultadoTareaMonitoreada)`,
-		 * - se acaben los reintentos, en cuyo caso el resultado de la tarea bucle sería `None`.
-		 */
+		/** Creates a task, let's call it "loop", which when executed builds a task using `taskBuilder` and triggers it. If it takes more time than the given `timeout` to complete, triggers it again.
+		 * This cycle repeats until the execution time of the task does not exceed the `timeout`, or the retries are exhausted.
+		 * The execution of the loop task will complete when:
+		 * - the time taken by the task to complete is within the `timeout`, in which case the result of the loop task will be `Some(taskResult)`,
+		 * - the retries are exhausted, in which case the result of the loop task will be `None`.
+		 * $notReusableTask */
 		def retryWhileTimeout[A](maxRetries: Int, timeout: FiniteDuration)(taskBuilder: Int => Task[Try[A]]): Task[Maybe[A]] = {
 			companion.attemptUntilRight[Unit, A](maxRetries) { attemptsAlreadyMade =>
 				val task: Task[Try[A]] = taskBuilder(attemptsAlreadyMade)
@@ -315,9 +399,10 @@ trait SchedulingExtension { thisSchedulingExtension: Doer =>
 			}
 		}
 
-		/** Crea una tarea que ejecuta repetidamente la tarea recibida mientras el resultado de ella sea `Maybe.empty` y no se supere la `maximaCantEjecuciones` indicada; esperando la `pausa` indicada entre el fin de una ejecución y el comienzo de la siguiente. */
-		def reiterateDelayedWhileEmpty[A](maximaCantEjecuciones: Int, pausa: Schedule)(tarea: Task[Maybe[Try[A]]]): Task[Maybe[A]] =
-			new DelayedLoop[A](maximaCantEjecuciones, pausa)(tarea)
+		/** Creates a task that repeatedly executes the given task as long as its result is `Maybe.empty` and the specified `maxNumberOfExecutions` is not exceeded; waiting for the specified `pause` between the end of one execution and the start of the next.
+		 * $notReusableTask */
+		inline def reiterateDelayedWhileEmpty[A](maxNumberOfExecutions: Int, pause: Schedule)(task: Task[Maybe[Try[A]]]): Task[Maybe[A]] =
+			new DelayedLoop[A](maxNumberOfExecutions, pause)(task)
 	}
 
 	final class DelayedLoop[A](maxNumberOfExecutions: Int, delay: Schedule)(task: Task[Maybe[Try[A]]]) extends Task[Maybe[A]] {

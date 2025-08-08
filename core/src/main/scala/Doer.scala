@@ -1769,7 +1769,7 @@ trait Doer { thisDoer =>
 	 */
 	final class Wait[+A](future: Future[A]) extends AbstractTask[A] {
 		override def engage(onComplete: Try[A] => Unit): Unit =
-			future.onComplete(onComplete)(ownSingleThreadExecutionContext)
+			future.onComplete(onComplete)(using ownSingleThreadExecutionContext)
 
 		override def toString: String = deriveToString[Wait[A]](this)
 	}
@@ -1788,7 +1788,7 @@ trait Doer { thisDoer =>
 				catch {
 					case NonFatal(e) => Future.failed(e)
 				}
-			future.onComplete(onComplete)(ownSingleThreadExecutionContext)
+			future.onComplete(onComplete)(using ownSingleThreadExecutionContext)
 		}
 
 		override def toString: String = deriveToString[Alien[A]](this)
@@ -2350,7 +2350,7 @@ trait Doer { thisDoer =>
 				if firstOnCompleteObserver ne null then {
 					firstOnCompleteObserver(result)
 					firstOnCompleteObserver = null // unbind the observer reference to help the garbage collector
-				};
+				}
 			} { value =>
 				try onAlreadyCompleted(value)
 				catch {
